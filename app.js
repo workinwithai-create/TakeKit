@@ -309,11 +309,11 @@ function fastRelease(r, now){ try { r.g.gain.cancelScheduledValues(now); r.g.gai
 // ---------- live bus: chairs + voice (A/B makeup) + live MIDI + mic monitor -> master -> safety limiter -> output ----------
 let ctx = null, bus = null;
 function buildBus(c){ const comp = c.createDynamicsCompressor(); comp.threshold.value = -6; comp.knee.value = 3; comp.ratio.value = 20; comp.attack.value = 0.002; comp.release.value = 0.1;
-  const master = c.createGain(), voice = c.createGain(), ab = c.createGain(), live = c.createGain(), mon = c.createGain(), an = c.createAnalyser(), chairs = {}; an.fftSize = 256;
+  const master = c.createGain(), voice = c.createGain(), ab = c.createGain(), live = c.createGain(), mon = c.createGain(), an = c.createAnalyser(), anT = c.createAnalyser(), chairs = {}; an.fftSize = 256; anT.fftSize = 256; // anT: transport only (band + vocal comp), not the mic monitor or live keys
   master.gain.value = state.master; live.gain.value = state.liveGain; voice.gain.value = state.voiceMute ? 0 : state.voiceGain;
-  for (const ch of CHAIRS) { const g = c.createGain(); g.gain.value = state.mutes[ch.id] ? 0 : state.gains[ch.id]; g.connect(master); chairs[ch.id] = g; }
-  ab.connect(voice); voice.connect(master); live.connect(master); mon.connect(master); master.connect(comp); comp.connect(c.destination); comp.connect(an);
-  return { comp, master, voice, ab, live, mon, chairs, an }; }
+  for (const ch of CHAIRS) { const g = c.createGain(); g.gain.value = state.mutes[ch.id] ? 0 : state.gains[ch.id]; g.connect(master); g.connect(anT); chairs[ch.id] = g; }
+  ab.connect(voice); voice.connect(master); voice.connect(anT); live.connect(master); mon.connect(master); master.connect(comp); comp.connect(c.destination); comp.connect(an);
+  return { comp, master, voice, ab, live, mon, chairs, an, anT }; }
 async function ensureCtx(){ if (!ctx) { ctx = new (window.AudioContext || window.webkitAudioContext)(); bus = buildBus(ctx); applySink();
     for (const t of takes) if (t.sr !== ctx.sampleRate) { t.data = resample(t.data, t.sr, ctx.sampleRate); t.sr = ctx.sampleRate; t.an = analyzeAudio(t); } }
   if (ctx.state !== "running") await ctx.resume(); }
@@ -353,7 +353,7 @@ function stop(quiet){ clearInterval(timerId); timerId = null; const was = !!play
 function draw(){ if (!play) return; const now = ctx.currentTime; let cur = null; for (const e of stepLog) { if (e.time <= now) cur = e; else break; }
   if (cur) paintPlayhead(cur.s); requestAnimationFrame(draw); }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { if (play) { stop(true); setStatus("Stopped because the tab was hidden. Any unfinished pass was dropped. Press Play to start again."); } liveAllOff(); } });
-async function measureStopSilence(){ const a = new Float32Array(bus.an.fftSize), t0 = performance.now(); stop(); for (let i = 0; i < 200; i++) { await new Promise(r => setTimeout(r, 2)); bus.an.getFloatTimeDomainData(a); let p = 0; for (const x of a) p = Math.max(p, Math.abs(x)); if (p < 0.001) return { ms: performance.now() - t0, peak: p }; } return { ms: null }; }
+async function measureStopSilence(){ const a = new Float32Array(bus.anT.fftSize), t0 = performance.now(); stop(); for (let i = 0; i < 200; i++) { await new Promise(r => setTimeout(r, 2)); bus.anT.getFloatTimeDomainData(a); let p = 0; for (const x of a) p = Math.max(p, Math.abs(x)); if (p < 0.001) return { ms: performance.now() - t0, peak: p }; } return { ms: null }; }
 
 // ---------- recording: every full loop pass becomes a take (mic = dry audio, MIDI = notes) ----------
 let rec = null, armNext = false; const recNotes = [];
@@ -629,12 +629,12 @@ function setSetting(k, v){
   else state[k] = v;
   save(); if (["recipe", "liveInst", "bpm", "chords"].includes(k)) ensureInstruments(neededInsts()); paintSong(); paintTakes(); if (k === "liveInst" || k === "mutes") { paintMix(); refreshMidi(); } return true; }
 
-async function tapStart(){ await ensureCtx(); ui.tap.classList.add("hide"); await ensureInstruments(neededInsts()); enableMic(); listDevices(); setStatus("Audio on. Press ▶ Play loop to hear your band, then ● Record takes and sing a few passes."); }
+function cantPlay(){ setStatus("Can't play yet: " + missingLabels(filesFor(neededInsts())).join(", ") + " didn't load. Press Retry in the samples line."); }
+async function tapStart(){ await ensureCtx(); ui.tap.classList.add("hide"); const ok = await ensureInstruments(neededInsts()); enableMic(); listDevices(); if (!ok) { cantPlay(); return; } setStatus("Audio on. Press ▶ Play loop to hear your band, then ● Record takes and sing a few passes."); }
 function bind(){ for (const id of ["status", "load", "play", "rec", "pos", "grid", "why", "listen", "abA", "abB", "match", "bpm", "key", "mode", "chords", "bars", "recipe", "seg", "recipeNote", "chordErr", "barsNote", "mix", "sw", "xf", "seam",
     "gateOn", "monitor", "trim", "lat", "hearComp", "recKeys", "buy", "licState", "licKey", "licBtn", "stems", "wav", "mid", "kbd", "audioIn", "audioOut", "audioOutNote", "midiIn", "midiOut", "midiNote", "liveInst", "micBtn", "micState", "tap", "laneV", "laneM", "imp", "impFile", "clearTakes", "presetBpm", "ios"]) ui[id] = $(id);
   setOpts(ui.key, NAMES.map((n, i) => [i, n]), state.keyRoot); setOpts(ui.recipe, Object.entries(RECIPES).map(([k, r]) => [k, r.name]), state.recipe); setOpts(ui.liveInst, LIVE_INSTS.map(k => [k, INST[k].label]), state.liveInst);
   ui.tap.onclick = tapStart;
-  const cantPlay = () => setStatus("Can't play yet: " + missingLabels(filesFor(neededInsts())).join(", ") + " didn't load. Press Retry in the samples line.");
   ui.play.onclick = async () => { await ensureCtx(); ui.tap.classList.add("hide"); if (play) { stop(); return; } if (await ensureInstruments(neededInsts())) start(); else cantPlay(); };
   ui.rec.onclick = async () => { await ensureCtx(); ui.tap.classList.add("hide"); if (rec) { stop(); return; } if (await ensureInstruments(neededInsts())) startRec(); else cantPlay(); };
   ui.bpm.onchange = () => setSetting("bpm", ui.bpm.value); ui.key.onchange = () => setSetting("keyRoot", +ui.key.value); ui.mode.onchange = () => setSetting("mode", ui.mode.value);

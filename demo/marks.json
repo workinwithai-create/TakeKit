@@ -1,0 +1,12 @@
+{
+ "marks": {
+  "s1": 3.115,
+  "s2": 6.968,
+  "s3": 11.889,
+  "s4": 16.531,
+  "s5": 20.247,
+  "end": 24.012
+ },
+ "video": "/workspace/takekit/demo/raw/page@cfbcb203e8cedf777c4118a779cbc092.webm",
+ "wav": "takekit-pop-92bpm-Am.wav"
+}
