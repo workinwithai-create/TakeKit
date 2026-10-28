@@ -3,7 +3,7 @@
   "sampleRate": 44100,
   "state": "running",
   "load": "Real samples ready: 40 files (FluidR3 GM pinned @044fab8 + CC0 Virtuosity kit).",
-  "mic": "Mic off."
+  "mic": "Mic on: Fake Default Audio Input \u00b7 44100 Hz \u00b7 you hear yourself live through your output (use headphones to avoid feedback) \u00b7 takes are recorded dry, before the gate"
  },
  "comp": {
   "takes": [
@@ -188,7 +188,7 @@
  },
  "c4": {
   "lock_bar1_to_p1": {
-   "heard_at_s_after_change": 2.296,
+   "heard_at_s_after_change": 2.287,
    "one_bar_s": 2.609,
    "pass": true
   },
@@ -202,22 +202,22 @@
    "pass": true
   },
   "mute_drums": {
-   "heard_at_s_after_change": 0.128,
+   "heard_at_s_after_change": 0.12,
    "one_bar_s": 2.609,
    "pass": true
   },
   "recipe_groove": {
-   "heard_at_s_after_change": 0.697,
+   "heard_at_s_after_change": 0.688,
    "one_bar_s": 2.609,
    "pass": true
   },
   "key_D": {
-   "heard_at_s_after_change": 0.246,
+   "heard_at_s_after_change": 0.237,
    "one_bar_s": 2.609,
    "pass": true
   },
   "bpm_120": {
-   "heard_at_s_after_change": 0.139,
+   "heard_at_s_after_change": 0.13,
    "one_bar_s": 2.609,
    "pass": true
   },
@@ -235,11 +235,11 @@
   "pass": true
  },
  "stop": {
-  "ms": 549.1999999880791,
-  "peak": 0.0009850370697677135,
+  "ms": 18.899999976158142,
+  "peak": 0,
   "active_after": 0,
   "all_notes_off_channels": 16,
-  "pass": false
+  "pass": true
  },
  "c3": {
   "hidden_s": 30,
@@ -435,8 +435,8 @@
     "120"
    ]
   ],
-  "meter_max_pct_3s": 87.4707,
-  "sink_after_select": "f529ae9ac258464b08316cf8a1f445e04f5797fc66b0a985567144b6cd5e1be3",
+  "meter_max_pct_3s": 97.6582,
+  "sink_after_select": "056eaae31d21ca7e5d70be667ba6377bf386319f870ec2b82558d57938b1d188",
   "out_note": "Playing through the selected output.",
   "pass": true
  },
@@ -501,12 +501,12 @@
   "bundled_kit_requests": 12,
   "blocked_host": {
    "load": "Missing instruments: Piano (FluidR3 acoustic grand), Finger bass (FluidR3 electric bass), String ensemble (FluidR3). These samples didn't load (sample host blocked or offline). Playback and export stay off until they load. Retry",
-   "play_status": "Audio on. Press \u25b6 Play loop to hear your band, then \u25cf Record takes and sing a few passes.",
+   "play_status": "Can't play yet: Piano (FluidR3 acoustic grand), Finger bass (FluidR3 electric bass), String ensemble (FluidR3) didn't load. Press Retry in the samples line.",
    "export_error": "Missing instruments: Piano (FluidR3 acoustic grand), Finger bass (FluidR3 electric bass), String ensemble (FluidR3)",
    "playing": false,
    "errors": []
   },
-  "pass": false
+  "pass": true
  },
  "c7": {
   "@main/@gh-pages": 0,
@@ -651,7 +651,7 @@
   "c6": true,
   "c4": true,
   "midi_out": true,
-  "stop": false,
+  "stop": true,
   "c3": true,
   "recording": true,
   "midi_file": true,
@@ -662,7 +662,7 @@
   "stems": true,
   "persist": true,
   "license": true,
-  "c5": false,
+  "c5": true,
   "c7": true,
   "c1_other_lengths": true,
   "mobile": true,

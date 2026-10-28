@@ -8,3 +8,10 @@ __pycache__/
 *.mid
 *.zip
 !qa/demo-takes-92bpm-Am.wav
+demo/raw/
+demo/*.mp4
+demo/*.png
+demo/*.txt
+demo/marks.json
+qa/local/
+qa/prod.json
