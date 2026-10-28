@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TakeKit: sing the passes, get the comp</title>
+<meta name="description" content="Loop your chords on a real-sample band, sing (or play) pass after pass, and TakeKit scores every bar of every take and builds the best comp, with seams hidden at the quietest point. Exports a grid-locked WAV, MIDI and stems.">
+<link rel="stylesheet" href="styles.css"></head>
+<body>
+<div id="tap" class="tap"><button id="tapBtn">Tap to start audio + mic<small>TakeKit plays a real-sample band and listens to your mic. Headphones are best: you hear yourself live.</small></button></div>
+<header><div class="brand"><b>TakeKit</b><span>by WorkinWithAI</span></div>
+<p class="pitch">Sing pass after pass over <b>your</b> loop. TakeKit scores every bar of every take for pitch, timing, level and dropouts, then stitches the best comp with the seams hidden in the breaths. Every pick is yours to change.</p></header>
+<p id="ios" class="hint ios" hidden>iPhone/iPad: flip the silent switch off (or use headphones). iOS mutes web audio when the ringer is silenced.</p>
+<main>
+<section class="card song"><h2>1 · Your song</h2>
+  <div class="row">
+    <label>BPM <input id="bpm" type="number" min="60" max="180" step="1"></label>
+    <label>Key <select id="key"></select> <select id="mode"><option value="minor">minor</option><option value="major">major</option></select></label>
+    <label class="grow">Chords (one per bar) <input id="chords" type="text" spellcheck="false" placeholder="Am F C G"></label>
+    <label>Bars <select id="bars"><option value="4">4</option><option value="8">8</option><option value="16">16</option></select></label>
+    <label>Band <select id="recipe"></select> <button id="presetBpm" class="mini" title="Use this style's preset tempo">preset tempo</button></label>
+  </div>
+  <p class="hint"><span id="chordErr"></span> <span id="recipeNote"></span> <span id="barsNote" class="warn"></span></p>
+</section>
+
+<section class="card transport">
+  <button id="play" class="big">▶ Play loop</button>
+  <button id="rec" class="big recb">● Record takes</button>
+  <div class="pos"><span id="pos">—</span></div>
+  <div id="status" class="status" role="status">Your BPM, key and chords come first. Then sing a few passes.</div>
+  <div id="load" class="load">Loading samples…</div>
+</section>
+
+<section class="card takes"><h2>2 · Takes → comp</h2>
+  <div class="row">
+    <div class="tabs"><button id="laneV" class="tab on">Vocal / audio takes</button><button id="laneM" class="tab">MIDI takes</button></div>
+    <label>Judge every <select id="seg"><option value="0.5">½ bar</option><option value="1">bar</option><option value="2">2 bars</option></select></label>
+    <div class="ab"><button id="abA" class="mini">A · best whole take</button><button id="abB" class="mini on">B · comp</button></div>
+    <label>Listen <select id="listen"></select></label>
+    <button id="imp" class="mini">Import takes (WAV/MP3)…</button><input id="impFile" type="file" accept="audio/*" multiple hidden>
+    <button id="clearTakes" class="mini del">Clear all takes</button>
+  </div>
+  <p id="match" class="hint"></p>
+  <div id="grid" class="gridwrap"></div>
+  <p class="hint">Click any score to use that take there and lock it 🔒 (click again to unlock). Auto-comp never overrides a lock. Hover a score to see its reason. <em class="tag">A</em> marks the best whole take.</p>
+  <div id="why" class="why"></div>
+</section>
+
+<section class="card brain"><h2>3 · How it judges <small>(smart defaults, all editable)</small></h2>
+  <div class="sliders">
+    <label>Pitch <input id="w_pitch" type="range" min="0" max="5" step="0.5"> <b id="w_pitch_v"></b></label>
+    <label>Timing <input id="w_timing" type="range" min="0" max="5" step="0.5"> <b id="w_timing_v"></b></label>
+    <label>Level <input id="w_level" type="range" min="0" max="5" step="0.5"> <b id="w_level_v"></b></label>
+    <label>No dropouts <input id="w_presence" type="range" min="0" max="5" step="0.5"> <b id="w_presence_v"></b></label>
+    <label title="Higher = fewer edits; keeps whole passes together">Keep whole passes <input id="sw" type="range" min="0" max="60" step="1"> <b id="sw_v"></b></label>
+    <label>Crossfade <input id="xf" type="range" min="4" max="60" step="1"> <b id="xf_v"></b></label>
+    <label title="How far a seam may move to find a breath or gap">Seam search <input id="seam" type="range" min="0" max="200" step="5"> <b id="seam_v"></b></label>
+  </div>
+  <p class="hint">Pitch = cents off the nearest note, plus notes outside the key or chord. Timing = note starts against the 8th grid (16th for MIDI). Level = against the other takes in that bar, and clipping. Dropouts = missing words or notes.</p>
+</section>
+
+<section class="card inputs"><h2>4 · Inputs &amp; outputs</h2>
+  <div class="cols">
+    <div>
+      <h3>Mic / audio in</h3>
+      <label>Input <select id="audioIn"></select></label> <button id="micBtn" class="mini">Turn mic on</button>
+      <p id="micState" class="hint">Mic off.</p>
+      <div class="meter"><div id="meterBar"></div><span id="clip">CLIP</span></div> <span id="gateLed" class="led">gate</span>
+      <label><input id="monitor" type="checkbox"> Hear myself live (monitor)</label>
+      <label>Trim <input id="trim" type="range" min="-24" max="24" step="1"> <b id="trim_v"></b></label>
+      <fieldset><legend><label><input id="gateOn" type="checkbox"> Noise gate</label></legend>
+        <label>Threshold <input id="g_th" type="range" min="-80" max="-10" step="1"> <b id="g_th_v"></b></label>
+        <label>Attack <input id="g_atk" type="range" min="0.5" max="50" step="0.5"> <b id="g_atk_v"></b></label>
+        <label>Hold <input id="g_hold" type="range" min="0" max="500" step="5"> <b id="g_hold_v"></b></label>
+        <label>Release <input id="g_rel" type="range" min="5" max="1000" step="5"> <b id="g_rel_v"></b></label></fieldset>
+      <label title="Nudge if takes land early/late against the band">Latency nudge <input id="lat" type="range" min="-80" max="80" step="1"> <b id="lat_v"></b></label>
+      <label><input id="hearComp" type="checkbox"> Play the current comp while recording</label>
+    </div>
+    <div>
+      <h3>Audio out</h3>
+      <label>Output <select id="audioOut"></select></label><p id="audioOutNote" class="hint"></p>
+      <h3>MIDI</h3>
+      <label>MIDI in <select id="midiIn"></select></label> <label>MIDI out <select id="midiOut"></select></label>
+      <label>Your sound <select id="liveInst"></select></label>
+      <p id="midiNote" class="hint"></p>
+      <label><input id="recKeys" type="checkbox"> Record on-screen keys too</label>
+      <div class="kbdbar"><button id="octDn" class="mini">◀</button><span id="oct_v"></span><button id="octUp" class="mini">▶</button> <span class="hint">On-screen fallback (keys A W S E D F T G Y H U J K)</span></div>
+      <div id="kbd" class="kbd"></div>
+    </div>
+  </div>
+</section>
+
+<section class="card mixer"><h2>5 · Mix</h2><div id="mix" class="mix"></div><p class="hint">Every chair → master → safety limiter. Exports skip the limiter and are peak-normalised to −1 dBFS.</p></section>
+
+<section class="card export"><h2>6 · Export</h2>
+  <div class="row"><button id="wav">Export WAV</button><button id="mid">Export MIDI</button><button id="stems">Export stems ZIP</button></div>
+  <p class="hint">48 kHz / 24-bit stereo at exactly your bar length with the downbeat on sample 0. It drops onto your DAW grid and loops without clicks. The MIDI has tempo, 4/4, a track per chair, every MIDI take, and markers naming the take used in each segment. Files are named <code>takekit-&lt;band&gt;-&lt;bpm&gt;bpm-&lt;key&gt;</code>.</p>
+  <div class="lic"><button id="buy" disabled>Checkout opening soon</button> <input id="licKey" placeholder="License key"> <button id="licBtn" class="mini">Activate</button> <span id="licState" class="hint"></span></div>
+</section>
+</main>
+<footer><p>Real samples only: FluidR3 GM (MIT) pinned to commit <code>044fab8</code> via jsDelivr, plus the Virtuosity Drums kit (CC0), bundled. See <a href="samples/CREDITS.md">credits</a>. Takes stay in this browser (IndexedDB); nothing is uploaded.</p><p>© 2026 WorkinWithAI · TakeKit</p></footer>
+<script src="app.js"></script>
+</body></html>
