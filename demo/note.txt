@@ -1,1 +1,0 @@
-Demo takes: FluidR3 “Voice Oohs” sample (not a human singer). Sound: TakeKit's own WAV export.

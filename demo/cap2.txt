@@ -1,2 +1,0 @@
-Auto-comp picks the best bar from each take.
-Click any cell to lock your own pick.

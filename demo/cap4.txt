@@ -1,2 +1,0 @@
-Export 48 kHz/24-bit WAV, MIDI and stems.
-takekit.vercel.app  ·  $24 once
