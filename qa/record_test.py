@@ -66,8 +66,8 @@ async def run(p,tag,R):
   errs=[e for e in pg.errs if 'due to access control checks' not in e]  # known Playwright-WebKit/Linux fetch quirk (also on prod before this change)
   ok('no_page_errors',not errs,errors=errs[:5]); await pg.br.close()
   # 8 plain errors: permission denied / no input / unsupported
-  for name,init,word in [('permission_denied',"navigator.mediaDevices.getUserMedia=()=>Promise.reject(new DOMException('denied','NotAllowedError'))",'permission'),
-                         ('no_input_device',"navigator.mediaDevices.getUserMedia=()=>Promise.reject(new DOMException('none','NotFoundError'))",'No microphone'),
+  for name,init,word in [('permission_denied',"(()=>{const f=()=>Promise.reject(new DOMException('x','NotAllowedError')); if(window.MediaDevices) Object.defineProperty(MediaDevices.prototype,'getUserMedia',{value:f,configurable:true,writable:true}); if(navigator.mediaDevices) Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value:f,configurable:true,writable:true})})()",'permission'),
+                         ('no_input_device',"(()=>{const f=()=>Promise.reject(new DOMException('x','NotFoundError')); if(window.MediaDevices) Object.defineProperty(MediaDevices.prototype,'getUserMedia',{value:f,configurable:true,writable:true}); if(navigator.mediaDevices) Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value:f,configurable:true,writable:true})})()",'No microphone'),
                          ('unsupported',"Object.defineProperty(navigator,'mediaDevices',{value:undefined,configurable:true});",'can')]:
     pg=await newpage(p,tag,init); await boot(pg); await pg.click('#rec'); await pg.wait_for_timeout(800)
     e=await ev(pg,f"()=>({{shown:!document.getElementById('recErr').hidden, txt:document.getElementById('recErr').textContent, rec:{F}.recording()}})")
