@@ -103,7 +103,7 @@ async def main():
     t1=await pg.evaluate(f"()=>{{const t={F}.takes().at(-1); return {{region:t.region, n:(t.data||t.pcm||[]).length}}}}")
     await setv(pg,'loop',True); await setv(pg,'loopSec',1); n1=await pg.evaluate(f"()=>{F}.takes().length"); await pg.click('#rec'); await pg.wait_for_timeout(int(4*4*60/180*1000*1.3)+1200); await pg.click('#rec') 
     await pg.wait_for_timeout(1500); t2=await pg.evaluate(f"()=>{F}.takes().slice({n1}).map(t=>t.region)")
-    ok('record_full_and_loop_regions',t1['region'] in ([0,8],{'b0':0,'b1':8}) and t2 and all(r in ([4,8],{'b0':4,'b1':8}) for r in t2),full=t1,loop=t2)
+    ok('record_full_and_loop_regions',t1['region'] in ([0,8],{'b0':0,'b1':8}) and t2 and t2[0] in ([4,8],{'b0':4,'b1':8}) and all(r[0]==4 and r[1]<=8 for r in t2),full=t1,loop=t2)
     # ---- persistence
     await pg.reload(); await pg.click('#tapBtn'); await pg.wait_for_function(f"{F}.ready()",timeout=90000)
     ps=await pg.evaluate(f"()=>({{loop:{F}.state.loop,loopSec:{F}.state.loopSec,secs:{F}.regions().map(r=>r.name),bpm:{F}.state.bpm}})")

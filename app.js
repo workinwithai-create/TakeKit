@@ -150,7 +150,7 @@ const laneTakes = lane => lane === "voice" ? takes : midiTakes();
 const idb = { db: null,
   open(){ if (this.db) return Promise.resolve(this.db); return new Promise((res, rej) => { const r = indexedDB.open(APP, 2); r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains("takes")) d.createObjectStore("takes", { keyPath: "id" }); if (!d.objectStoreNames.contains("files")) d.createObjectStore("files", { keyPath: "id" }); }; r.onsuccess = () => res(this.db = r.result); r.onerror = () => rej(r.error); }); },
   async tx(mode, fn){ const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction("takes", mode), s = t.objectStore("takes"), r = fn(s); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); }); },
-  put(t){ return this.tx("readwrite", s => s.put({ id: t.id, name: t.name, sr: t.sr, data: t.data, bpm: t.bpm, bars: t.bars, region: t.region, created: t.created })).catch(() => {}); },
+  put(t){ return this.tx("readwrite", s => s.put({ id: t.id, name: t.name, sr: t.sr, data: t.data, bpm: t.bpm, bars: t.bars, region: t.region, sung: t.sung, created: t.created })).catch(() => {}); },
   del(id){ return this.tx("readwrite", s => s.delete(id)).catch(() => {}); },
   clear(){ return this.tx("readwrite", s => s.clear()).catch(() => {}); },
   all(){ return this.tx("readonly", s => s.getAll()).catch(() => []); } };
@@ -202,9 +202,10 @@ let scoreCache = {};
 function scoresFor(lane){ const key = lane + "|" + ver + "|" + takes.length + "|" + midiTakes().length + "|" + (window.__pro ? window.__pro.scoreKey() : ""); if (scoreCache[key]) return scoreCache[key];
   const list = laneTakes(lane).filter(compatible), N = nSeg(), segs = [], w = state.weights, wsum = (w.pitch + w.timing + w.level + w.presence) || 1;
   for (let k = 0; k < N; k++) { const cells = {}, stats = {};
-    if (lane === "voice") { const L = loopDur() / N, s0 = k * L, s1 = s0 + L; for (const t of list) stats[t.id] = segStatsAudio(t, s0, s1);
-      const vf = Math.max(0, ...Object.values(stats).map(s => s.voicedFrac)), med = median(Object.values(stats).filter(s => s.voicedFrac > 0.1).map(s => s.db));
-      for (const t of list) { const s = stats[t.id]; if (vf < 0.08) { cells[t.id] = { score: 0, reason: "nothing sung here", s }; continue; }
+    if (lane === "voice") { const L = loopDur() / N, s0 = k * L, s1 = s0 + L; const bA = k * state.bars / N, bB = (k + 1) * state.bars / N, sungHere = t => !t.sung || (bA >= t.sung[0] - 1e-6 && bB <= t.sung[1] + 1e-6);
+      for (const t of list) { stats[t.id] = segStatsAudio(t, s0, s1); if (!sungHere(t)) stats[t.id].notSung = true; }
+      const vf = Math.max(0, ...Object.values(stats).filter(s => !s.notSung).map(s => s.voicedFrac)), med = median(Object.values(stats).filter(s => s.voicedFrac > 0.1).map(s => s.db));
+      for (const t of list) { const s = stats[t.id]; if (s.notSung) { cells[t.id] = { score: 0, reason: "not sung (stopped early)", s, notSung: true }; continue; } if (vf < 0.08) { cells[t.id] = { score: 0, reason: "nothing sung here", s }; continue; }
         const pitch = s.voicedFrac > 0.05 ? clamp(1 - (s.cents - 6) / 30, 0, 1) * (1 - 0.6 * s.oof) : 0;
         const timing = s.timingMs == null ? 0.7 : clamp(1 - Math.max(0, s.timingMs - 15) / 85, 0, 1);
         let level = s.voicedFrac > 0.05 ? clamp(1 - Math.max(0, Math.abs(s.db - med) - 2) / 10, 0, 1) : 0; if (s.clip) level *= 0.2;
@@ -233,7 +234,7 @@ function scoresFor(lane){ const key = lane + "|" + ver + "|" + takes.length + "|
 function autoComp(lane){ const sc = scoresFor(lane), ids = sc.takes.filter(id => !state.excluded[id]), N = sc.segs.length, opts = ids.concat([null]), locks = state.locks[lane] || {};
   if (!ids.length) return { choice: Array(N).fill(null), why: Array(N).fill("no takes yet") };
   const cost = (k, o) => { const L = locks[k]; if (L !== undefined && (L === "none" || ids.includes(L))) { const want = L === "none" ? null : L; if (o !== want) return 1e6; }
-    const sg = sc.segs[k]; if (o === null) return sg.empty ? 0 : 100; return sg.empty ? 5 : 100 - sg.cells[o].score; };
+    const sg = sc.segs[k]; if (o === null) return sg.empty ? 0 : 100; return sg.cells[o].notSung ? 150 : sg.empty ? 5 : 100 - sg.cells[o].score; };
   const sw = (a, b) => (a === b || a === null || b === null) ? 0 : state.switchPen;
   let dp = opts.map(o => cost(0, o)); const back = [];
   for (let k = 1; k < N; k++) { const nd = [], bk = []; for (let j = 0; j < opts.length; j++) { let best = 1e12, bi = 0; for (let i = 0; i < opts.length; i++) { const c = dp[i] + sw(opts[i], opts[j]); if (c < best) { best = c; bi = i; } } nd.push(best + cost(k, opts[j])); bk.push(bi); } dp = nd; back.push(bk); }
@@ -336,6 +337,7 @@ function buildBus(c){ const comp = c.createDynamicsCompressor(); comp.threshold.
   ab.connect(voice); voice.connect(master); voice.connect(anT); live.connect(master); mon.connect(master); master.connect(comp); comp.connect(c.destination); comp.connect(an);
   const b = { comp, master, voice, ab, live, mon, chairs, an, anT }; if (window.__pro) window.__pro.bus(c, b); return b; }
 async function ensureCtx(){ if (!ctx) { ctx = new (window.AudioContext || window.webkitAudioContext)(); bus = buildBus(ctx); applySink();
+    ctx.addEventListener("statechange", () => { if (ctx.state !== "running" && (rec || play)) { recErr("Audio was paused by the browser (" + ctx.state + "). What you recorded so far is kept.", true); if (play) stop(); } });
     for (const t of takes) if (t.sr !== ctx.sampleRate) { t.data = resample(t.data, t.sr, ctx.sampleRate); t.sr = ctx.sampleRate; t.an = analyzeAudio(t); } }
   if (ctx.state !== "running") await ctx.resume(); }
 function applyMix(){ if (!bus) return; const now = ctx.currentTime; for (const ch of CHAIRS) bus.chairs[ch.id].gain.setTargetAtTime(state.mutes[ch.id] ? 0 : state.gains[ch.id], now, 0.01);
@@ -356,58 +358,91 @@ function scheduleVoiceBar(bar, t, first){ if (rec && !state.hearCompWhileRec) re
   g.gain.setValueAtTime(head ? 0 : 1, st); if (head) g.gain.linearRampToValueAtTime(1, st + 2 * pre); g.gain.setValueAtTime(1, st + len - 2 * pre); g.gain.linearRampToValueAtTime(0, st + len);
   src.connect(g); g.connect(bus.ab); bus.ab.gain.setValueAtTime(v.makeup, st); src.start(st, Math.max(0, so), len); src.stop(st + len + 0.005); const r = { src, g }; active.add(r); src.onended = () => active.delete(r); }
 function start(){ if (!ctx || ctx.state !== "running") return false; const miss = missingLabels(filesFor(neededInsts())); if (miss.length) { setStatus("Can't play: " + miss.join(", ") + " didn't load."); return false; }
-  stop(true); const [lo, hi] = playRange(); let from = armNext || cue == null ? lo : cue * STEPS; if (from < lo || from >= hi) from = lo;
-  if (armNext) { rec = { passes: [], made: 0 }; armNext = false; } play = { step: from, nextT: ctx.currentTime + 0.1, first: true, endT: null }; stepLog.length = 0; timerId = setInterval(scheduler, LOOKAHEAD_MS); scheduler(); requestAnimationFrame(draw); paintTransport(); return true; }
+  stop(true); const [lo, hi] = playRange(); let from = armNext ? (recPlan && recPlan.playFrom != null ? recPlan.playFrom * STEPS : lo) : cue == null ? lo : cue * STEPS; if (from < lo || from >= hi) from = lo;
+  if (armNext) { rec = { passes: [], made: 0, at: recPlan && recPlan.at != null ? recPlan.at * STEPS : lo, end: recPlan ? recPlan.end : null, punch: !!(recPlan && recPlan.punch), t0: ctx.currentTime, quietSince: null }; armNext = false; recPlan = null; } play = { step: from, nextT: ctx.currentTime + 0.1, first: true, endT: null }; stepLog.length = 0; timerId = setInterval(scheduler, LOOKAHEAD_MS); scheduler(); requestAnimationFrame(draw); paintTransport(); return true; }
 function scheduler(){ if (!play) return; const sd = stepDur();
   while (play.endT == null && play.nextT < ctx.currentTime + SCHEDULE_AHEAD) { const [lo, hi] = playRange();
+    if (rec && rec.end != null && !state.loop && play.step >= rec.end * STEPS) { play.endT = play.nextT; break; }
     if (play.step >= hi || play.step < lo) { if (state.loop) { play.step = lo; play.first = true; } else { play.endT = play.nextT; break; } } // whole song: stop at the end; loop: wrap to the section start
     scheduleStep(play.step, play.nextT, sd); play.nextT += sd; play.step++; }
   if (rec) recTick();
-  if (play && play.endT != null && ctx.currentTime > play.endT + latencyS() + 0.15) { if (rec) recTick(); const made = rec ? rec.made : 0; stop(true); cue = 0; paintPlayhead(0); setStatus(`Reached the end of the song (${state.bars} bars).` + (made ? ` Kept ${made} take${made > 1 ? "s" : ""}.` : "") + " Press Play to hear it from the top."); } }
+  if (play && play.endT != null && ctx.currentTime > play.endT + latencyS() + 0.15) { if (rec) recTick(); const made = rec ? rec.made : 0, punch = !!(rec && rec.punch); stop(true); if (punch) return void setStatus(made ? `Punch-in done. Kept ${made} take${made > 1 ? "s" : ""}; check the Takes grid.` : "Punch-in done, but nothing was heard from the mic, so no take was kept."); cue = 0; paintPlayhead(0); setStatus(`Reached the end of the song (${state.bars} bars).` + (made ? ` Kept ${made} take${made > 1 ? "s" : ""}.` : "") + " Press Play to hear it from the top."); } }
 let cue = 0;
 // click a bar or section: jump there on the audio clock (looping follows the section you jump into)
 function seekBar(bar){ bar = clamp(Math.floor(+bar || 0), 0, state.bars - 1); cue = bar; const ri = regions().indexOf(regionAt(bar));
   if (state.loop && ri !== state.loopSec) { state.loopSec = ri; saveMix(); }
   if (play) { const now = ctx.currentTime; for (const r of active) fastRelease(r, now); active.clear(); play.step = bar * STEPS; play.nextT = now + 0.06; play.first = true; play.endT = null; stepLog.length = 0;
-    if (rec && rec.passes.length) { rec.passes.length = 0; setStatus("Jumped: the unfinished pass was dropped. A take starts when a full pass begins."); } scheduler(); }
+    if (rec) { recTick(); const kept = keepPartial(); rec.at = bar * STEPS; if (!state.loop) rec.end = null; setStatus((kept ? `Jumped: kept ${kept} (the bars you sang so far). ` : "Jumped. ") + `Still recording from bar ${bar + 1}.`); } scheduler(); }
   paintPlayhead(bar * STEPS); paintTimeline(); return true; }
 function scheduleStep(k, time, sd){ const sg = song(), evs = sg.byStep.get(k) || [], heard = [];
-  if (rec && k === playRange()[0]) { const [lo, hi] = playRange(); rec.passes.push({ t0: time, bpm: state.bpm, bars: state.bars, b0: lo / STEPS, b1: hi / STEPS }); }
+  if (rec) { const [lo, hi] = playRange(); if (rec.at != null ? k === rec.at : k === lo) { rec.passes.push({ t0: time, bpm: state.bpm, bars: state.bars, b0: k / STEPS, b1: rec.end != null && rec.end > k / STEPS ? Math.min(rec.end, hi / STEPS) : hi / STEPS }); rec.at = null; } }
   for (const e of evs) { if (state.mutes[e.ch]) continue; const t = time + (e.abs - k) * sd; playEvent(ctx, bus.chairs[e.ch], e, t, sd, true); midiSend(e, t, sd); heard.push(e.ch + ":" + e.n); }
   if (k % STEPS === 0) { const rg = regionAt(k / STEPS); window.__barLog.push({ bar: k / STEPS, time, sec: rg ? rg.name : "", b0: rg ? rg.b0 : 0 }); if (window.__barLog.length > 4000) window.__barLog.shift(); if (window.__pro) window.__pro.bar(k / STEPS, time, play.first); scheduleVoiceBar(k / STEPS, time, play.first); play.first = false; }
   stepLog.push({ s: k, time }); if (stepLog.length > 512) stepLog.shift();
   window.__schedLog.push({ step: k, time, ver, bpm: state.bpm, recipe: state.recipe, keyRoot: state.keyRoot, listen: state.listen, notes: heard, voice: k % STEPS === 0 && voiceLive.buf ? voiceLive.key : null }); if (window.__schedLog.length > 4000) window.__schedLog.shift(); }
-function stop(quiet){ clearInterval(timerId); timerId = null; const was = !!play; play = null;
-  if (rec) endRec(true);
+function stop(quiet){ clearInterval(timerId); timerId = null; const was = !!play; let kept = "";
+  if (rec && ctx) { recTick(); kept = keepPartial(); } play = null; if (rec) endRec();
   if (ctx) { const now = ctx.currentTime; for (const r of active) fastRelease(r, now); active.clear(); liveAllOff(true); }
   if (midiOut) for (let c = 0; c < 16; c++) { midiOut.send([0xB0 | c, 123, 0]); midiOut.send([0xB0 | c, 120, 0]); }
-  paintTransport(); if (was && !quiet) setStatus("Stopped."); }
+  paintTransport(); if (kept) setStatus(`Stopped. Kept ${kept}: the bars you sang are scored, the rest are marked "not sung".`); else if (was && !quiet) setStatus("Stopped."); }
 function draw(){ if (!play) return; const now = ctx.currentTime; let cur = null; for (const e of stepLog) { if (e.time <= now) cur = e; else break; }
-  if (cur) { paintPlayhead(cur.s); if (window.__pro) window.__pro.draw(cur, now); } requestAnimationFrame(draw); }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { if (play) { stop(true); setStatus("Stopped because the tab was hidden. Any unfinished pass was dropped. Press Play to start again."); } liveAllOff(); } });
+  if (cur) { paintPlayhead(cur.s); if (window.__pro) window.__pro.draw(cur, now); } if (rec) paintRecHud(); requestAnimationFrame(draw); }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { if (play) { stop(true); setStatus("Stopped because the tab was hidden or the screen locked. Anything you sang so far was kept as a take. Press Play to start again."); } liveAllOff(); } });
 async function measureStopSilence(){ const a = new Float32Array(bus.anT.fftSize), t0 = performance.now(); stop(); for (let i = 0; i < 200; i++) { await new Promise(r => setTimeout(r, 2)); bus.anT.getFloatTimeDomainData(a); let p = 0; for (const x of a) p = Math.max(p, Math.abs(x)); if (p < 0.001) return { ms: performance.now() - t0, peak: p }; } return { ms: null }; }
 
 // ---------- recording: every full loop pass becomes a take (mic = dry audio, MIDI = notes) ----------
 let rec = null, armNext = false; const recNotes = [];
 const FREE_BARS = 8, FREE_TAKES = 6;
-async function startRec(){ await ensureCtx(); if (!mic && !midiInPort && !state.recordKeys) { setStatus("Turn the mic on or pick a MIDI input first (or tick ‘Record on-screen keys too’)."); return false; }
+let recPlan = null;
+const recSupported = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.AudioWorkletNode && (window.AudioContext || window.webkitAudioContext));
+function recErr(msg, resume){ const el = $("recErr"); if (!el) return; el.hidden = !msg; el.className = "recerr" + (resume ? " tap" : ""); el.innerHTML = msg ? "⚠ " + esc(msg) + (resume ? " <button id='recResume' class='mini'>Tap to resume audio</button>" : "") : "";
+  if (resume) $("recResume").onclick = async () => { try { await ctx.resume(); } catch (e) {} if (ctx.state === "running") { recErr(""); setStatus("Audio resumed. Press ● Record takes."); } else recErr("Audio is still paused. Close other apps using sound, unmute, and tap again.", true); }; }
+function curBar(){ if (play && ctx) { const now = ctx.currentTime; let cs = null; for (const e of stepLog) { if (e.time <= now) cs = e.s; else break; } if (cs != null) return Math.floor(cs / STEPS); } return clamp(cue || 0, 0, state.bars - 1); }
+function planRec(){ const from = state.recFrom || "top", [lo, hi] = playRange(), L = lo / STEPS, H = hi / STEPS; let b = clamp(curBar(), L, H - 1);
+  if (from === "here") return { at: b, playFrom: b, end: null, label: `from bar ${b + 1}` };
+  if (from === "sec") { const r = regionAt(b) || { b0: L, b1: H, name: "section" }; const b0 = Math.max(L, r.b0), b1 = Math.min(H, r.b1); return { at: b0, playFrom: Math.max(L, b0 - 1), end: b1, punch: true, label: `punch-in on ${r.name} (bars ${b0 + 1}–${b1})` }; }
+  return { at: L, playFrom: L, end: null, label: state.loop ? "the looped section" : `the whole song (${state.bars} bars)` }; }
+async function startRec(){ recErr("");
+  try { await ensureCtx(); } catch (e) { recErr("Your browser can't start audio here (" + e.name + "). Try Safari or Chrome, and make sure the page is https."); return false; }
+  if (ctx.state !== "running") { recErr("Audio is paused by the browser (iPhone silent mode, another app, or no tap yet).", true); return false; }
+  if (!mic && !midiInPort && !state.recordKeys) { if (!recSupported()) { recErr("This browser can't record from a microphone (no getUserMedia / AudioWorklet). Use Safari 14.5+ or Chrome, or import takes from your DAW."); return false; }
+    if (!(await enableMic())) return false; }
   if (gated() && takes.length >= FREE_TAKES && midiTakes().length >= FREE_TAKES) { setStatus(`The free version keeps ${FREE_TAKES} takes per lane. Delete one or unlock TakeKit.`); return false; }
-  const wasPlaying = !!play; capChunks.length = 0; recNotes.length = 0;
-  if (wasPlaying && state.loop) rec = { passes: [], made: 0 }; else { cue = null; armNext = true; if (!start()) { armNext = false; return false; } }
+  const wasPlaying = !!play, from = state.recFrom || "top"; capChunks.length = 0; recNotes.length = 0; const plan = planRec();
+  if (wasPlaying && state.loop && from === "top") rec = { passes: [], made: 0, at: null, end: null, t0: ctx.currentTime, quietSince: null };
+  else { recPlan = plan; armNext = true; if (!start()) { armNext = false; recPlan = null; recErr("Couldn't start playback (samples still loading or audio paused). Wait for “Real samples ready”, then press Record again."); return false; } }
   if (mic) mic.node.port.postMessage({ rec: true });
-  paintTransport(); setStatus(wasPlaying ? "Armed: takes start at the top of the next pass." : (state.loop ? "Recording the looped section: every full pass becomes a take. Press Stop when you're done." : `Recording the whole song (${state.bars} bars, start to finish) as one take. It stops at the end.`)); return true; }
+  paintTransport(); paintRecHud(); setStatus(wasPlaying && state.loop && from === "top" ? "Armed: takes start at the top of the next pass." : `Recording ${plan.label}. Your take shows up in the Takes grid as you go; press Stop any time and the bars you sang are kept.`); return true; }
+// keep the pass in progress as a partial take (bars actually sung; the rest are "not sung"). Returns the take name or "".
+function keepPartial(){ if (!rec || !rec.passes.length || !ctx) return ""; const p = rec.passes.shift(); rec.passes.length = 0; const bd = 4 * 60 / p.bpm, el = ctx.currentTime - latencyS() - p.t0;
+  const nb = Math.min(p.b1 - p.b0, Math.floor(el / bd + 0.25)); if (nb < 1) return ""; const before = takes.length + midiTakes().length;
+  finishPass(Object.assign({}, p, { b1: p.b0 + nb, partial: p.b1 })); const t = takes.length + midiTakes().length > before ? (takes[takes.length - 1] || {}).name || "a take" : "";
+  return t ? `${t} (bars ${p.b0 + 1}–${p.b0 + nb})` : ""; }
+// live recording HUD: REC light, input meter, elapsed bars, and the take growing
+function paintRecHud(){ const h = $("recHud"), lt = $("liveTake"); if (!h) return; h.hidden = !rec; if (lt) lt.hidden = !rec; if (!rec || !ctx) return;
+  const p = rec.passes[0], bd = 4 * 60 / state.bpm, db = peakHold > 1e-5 ? 20 * Math.log10(peakHold) : -90, now = ctx.currentTime;
+  $("recMeter").style.width = clamp((db + 60) / 60 * 100, 0, 100) + "%"; $("recMeter").className = db > -1 ? "hot" : db > -50 ? "" : "low";
+  if (mic) { if (peakHold < 3e-4) { if (rec.quietSince == null) rec.quietSince = now; } else rec.quietSince = null; }
+  const quiet = mic && rec.quietSince != null && now - rec.quietSince > 2.5;
+  let info, frac = 0, txt;
+  if (p) { const el = Math.max(0, now - latencyS() - p.t0), nb = Math.min(p.b1 - p.b0, Math.floor(el / bd)), tot = p.b1 - p.b0; frac = clamp(el / (tot * bd), 0, 1);
+    info = `bar ${Math.min(p.b1, p.b0 + nb + 1)} of ${p.b0 + 1}–${p.b1} · ${nb} bar${nb === 1 ? "" : "s"} recorded · ${fmtMS(el)}`; txt = `● Take ${state.nextTake} (recording) · bars ${p.b0 + 1}–${p.b0 + Math.max(1, nb)} so far of ${p.b0 + 1}–${p.b1}. Stop any time: what you sang is kept.`; }
+  else { info = "count-in… recording starts at bar " + ((rec.at != null ? rec.at / STEPS : playRange()[0] / STEPS) + 1); txt = "● Waiting for the take to start…"; }
+  $("recInfo").textContent = info + (quiet ? " · NO INPUT: nothing is coming from the mic" : ""); h.classList.toggle("quiet", !!quiet); $("recGrow").style.width = (frac * 100).toFixed(1) + "%";
+  if (lt) { lt.querySelector("span").textContent = txt; lt.querySelector("i").style.width = (frac * 100).toFixed(1) + "%"; }
+  if (quiet && !rec.warned) { rec.warned = true; recErr("No input: the mic is on but silent. Check the Input select (Mic panel), the mute switch on your headset, or iPhone Settings › Safari › Microphone."); } }
 function latencyS(){ return (ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0) + (mic ? mic.inLat : 0) + state.latFixMs / 1000; }
 function recTick(){ while (rec && rec.passes.length) { const p = rec.passes[0], ld = (p.b1 - p.b0) * 4 * 60 / p.bpm; if (ctx.currentTime > p.t0 + ld + latencyS() + 0.06) finishPass(rec.passes.shift()); else break; } }
 function finishPass(p){ const ld = (p.b1 - p.b0) * 4 * 60 / p.bpm, off = p.b0 * 4 * 60 / p.bpm, made = []; let num = 0; const passNo = () => num || (num = state.nextTake++);
-  if (p.bpm !== state.bpm || p.bars !== state.bars) { setStatus("Tempo or length changed during the pass, so it wasn't kept as a take."); return; }
+  if (p.bpm !== state.bpm || p.bars !== state.bars) { setStatus("Tempo or length changed during the pass, so it wasn't kept as a take."); recErr("That take wasn't kept: the tempo or song length changed while recording."); return; }
   if (gated() && takes.length >= FREE_TAKES && midiTakes().length >= FREE_TAKES) { setStatus(`Free version: ${FREE_TAKES} takes per lane reached. Unlock for unlimited takes.`); return; }
   if (mic && (!gated() || takes.length < FREE_TAKES)) { const part = sliceCapture(p.t0, ld), data = new Float32Array(Math.round(p.bars * 4 * 60 / p.bpm * ctx.sampleRate)), o0 = Math.round(off * ctx.sampleRate); data.set(part.subarray(0, Math.max(0, data.length - o0)), o0); let pk = 0; for (let i = 0; i < data.length; i++) pk = Math.max(pk, Math.abs(data[i]));
-    if (pk > 0.003) { const t = { id: "v" + Date.now().toString(36) + state.nextTake, name: "Take " + passNo(), lane: "voice", sr: ctx.sampleRate, data, bpm: p.bpm, bars: p.bars, region: [p.b0, p.b1], created: Date.now() }; t.an = analyzeAudio(t); takes.push(t); idb.put(t); made.push(t.name); } }
+    if (pk > 2e-5) { const t = { id: "v" + Date.now().toString(36) + state.nextTake, name: "Take " + passNo(), lane: "voice", sr: ctx.sampleRate, data, bpm: p.bpm, bars: p.bars, region: [p.b0, p.b1], created: Date.now() }; if (p.partial || p.b0 > 0 || p.b1 < p.bars) t.sung = [p.b0, p.b1]; if (pk < 0.003) recErr("That take is very quiet (peak " + Math.round(20 * Math.log10(pk)) + " dBFS). Raise the input trim or move closer to the mic."); t.an = analyzeAudio(t); takes.push(t); idb.put(t); made.push(t.name); } }
   const sd = 60 / p.bpm / 4, ns = recNotes.filter(n => n.on >= p.t0 - 0.03 && n.on < p.t0 + ld - 0.03).map(n => ({ n: n.note, v: Math.round(n.vel * 1000) / 1000, s: Math.max(0, Math.round((n.on - p.t0) / sd * 1000) / 1000) + p.b0 * STEPS, d: Math.max(0.25, Math.round((Math.min(n.off != null ? n.off : p.t0 + ld, p.t0 + ld) - n.on) / sd * 1000) / 1000) }));
   if (ns.length && (!gated() || midiTakes().length < FREE_TAKES)) { const t = { id: "m" + Date.now().toString(36) + state.nextTake, name: "MIDI " + passNo(), lane: "midi", notes: ns, bars: p.bars }; state.midiTakes.push(t); made.push(t.name); }
   const keep = p.t0 + ld - 1; for (let i = capChunks.length - 1; i >= 0; i--) if ((capChunks[i].f + capChunks[i].d.length) / ctx.sampleRate < keep + latencyS()) capChunks.splice(i, 1);
-  save(); if (rec) rec.made += made.length; paintTakes(); setStatus(made.length ? `Kept ${made.join(" + ")}. Keep going: the next pass is the next take.` : "That pass was silent, so no take was kept."); }
-function endRec(discard){ if (!rec) return; const p = rec.passes.length; rec = null; if (mic) mic.node.port.postMessage({ rec: false }); paintTransport(); if (p && discard) setStatus("Stopped. The unfinished pass was dropped; full passes are kept as takes."); }
+  save(); if (rec) rec.made += made.length; ver++; paintTakes(); setStatus(made.length ? `Kept ${made.join(" + ")}. Keep going: the next pass is the next take.` : "That pass was silent, so no take was kept."); }
+function endRec(){ if (!rec) return; rec = null; if (mic) mic.node.port.postMessage({ rec: false }); paintTransport(); paintRecHud(); }
 
 // ---------- audio input: device choice, trim, noise gate (threshold/attack/hold/release), live monitoring ----------
 const CAPTURE_SRC = `class TKCap extends AudioWorkletProcessor{ constructor(){ super(); this.on=true; this.th=0.003; this.atk=0.002; this.hold=0.06; this.rel=0.12; this.env=0; this.g=0; this.h=0; this.rec=false; this.pk=0; this.n=0; this.port.onmessage=e=>Object.assign(this,e.data); }
@@ -430,9 +465,16 @@ async function enableMic(){ await ensureCtx(); if (mic) return true;
     trim.gain.value = dbToGain(state.trimDb); mon.gain.value = state.monitor ? 1 : 0; src.connect(trim); trim.connect(node); node.connect(mon); mon.connect(window.__pro ? window.__pro.monitorDest() : bus.mon); // gate (worklet) first, then the vocal chain
     node.port.onmessage = e => { const m = e.data; if (m.pk !== undefined) { peakHold = Math.max(m.pk, peakHold * 0.85); gateG = m.g; if (m.pk >= 0.98) clipUntil = performance.now() + 1200; paintMeter(); return; } capChunks.push(m); };
     const tr = stream.getAudioTracks()[0], s = tr.getSettings ? tr.getSettings() : {};
+    recErr(""); tr.onended = () => { if (mic && mic.stream === stream) { disableMic(); recErr("The microphone was disconnected. Plug it back in and press Record (or Turn mic on)."); } };
     mic = { stream, src, trim, node, mon, inLat: typeof s.latency === "number" ? s.latency : 0.01, label: tr.label }; node.port.postMessage(gateMsg()); if (rec) node.port.postMessage({ rec: true });
     paintMicState(); ui.micBtn.textContent = "Turn mic off"; listDevices(); return true; }
-  catch (e) { ui.micState.textContent = `Mic not available (${e.name}). You can still record MIDI takes or import takes from your DAW.`; return false; } }
+  catch (e) { const n = e && e.name, m = !recSupported() ? "This browser can't use a microphone here (needs Safari 14.5+ or Chrome over https)."
+      : n === "NotAllowedError" || n === "SecurityError" ? "Microphone permission is blocked. iPhone: tap “aA” in Safari’s address bar › Website Settings › Microphone › Allow (or Settings › Safari › Microphone), then reload. Desktop: click the lock icon next to the address, allow the microphone, and press Record again."
+      : n === "NotFoundError" || n === "OverconstrainedError" ? "No microphone found" + (state.audioIn ? " (the input you picked is unplugged; switched back to the default input, press Record again)" : ". Plug in a mic or headset and press Record again") + "."
+      : n === "NotReadableError" || n === "AbortError" ? "The microphone is busy in another app (a call, voice memo or another tab). Close it and press Record again."
+      : `The microphone couldn't start (${n || e}).`;
+    if ((n === "NotFoundError" || n === "OverconstrainedError") && state.audioIn) { state.audioIn = ""; saveMix(); }
+    ui.micState.textContent = m + " You can still record MIDI takes or import takes from your DAW."; recErr(m); return false; } }
 function paintMicState(){ if (!mic) { ui.micState.textContent = "Mic off."; return; } ui.micState.textContent = `Mic on: ${mic.label || "default input"} · ${ctx.sampleRate} Hz · ${state.monitor ? "you hear yourself live through your output (use headphones to avoid feedback)" : "monitor off"} · takes are recorded dry, before the gate`; }
 function disableMic(){ if (!mic) return; mic.stream.getTracks().forEach(t => t.stop()); try { mic.src.disconnect(); mic.node.disconnect(); mic.mon.disconnect(); } catch (e) {} mic = null; paintMicState(); ui.micBtn.textContent = "Turn mic on"; peakHold = 0; paintMeter(); }
 function paintMeter(){ const m = $("meterBar"), cl = $("clip"), gl = $("gateLed"); if (!m) return; const db = peakHold > 1e-5 ? 20 * Math.log10(peakHold) : -90;
@@ -656,7 +698,7 @@ function paintTakes(){ if (!ui.grid) return; const all = laneTakes(lane), okT = 
   for (const t of okT) { const ex = !!state.excluded[t.id], avg = Math.round(sc.segs.reduce((a, s) => a + (s.empty ? 0 : s.cells[t.id].score), 0) / Math.max(1, sc.segs.filter(s => !s.empty).length));
     h += `<tr class="${ex ? "ex" : ""}"><td class="nm"><span class="tn">${esc(takeName(t))}</span>${c.bestVoice === t.id || c.bestMidi === t.id ? ' <em class="tag">A</em>' : ""}</td><td>${avg}</td>`;
     for (let k = 0; k < N; k++) { const cell = sc.segs[k].cells[t.id], chosen = cmp.choice[k] === t.id, lk = locks[k] === t.id;
-      h += `<td data-col="${k}" data-seg="${k}" data-take="${esc(t.id)}" class="cell ${sc.segs[k].empty ? "na" : cls(cell.score)} ${chosen ? "pick" : ""} ${lk ? "lk" : ""}" title="${esc(cell.reason)}">${sc.segs[k].empty ? "·" : cell.score}${lk ? "🔒" : ""}<i>${esc(sc.segs[k].empty ? "" : cell.reason)}</i></td>`; }
+      h += `<td data-col="${k}" data-seg="${k}" data-take="${esc(t.id)}" class="cell ${sc.segs[k].empty || cell.notSung ? "na" : cls(cell.score)} ${chosen ? "pick" : ""} ${lk ? "lk" : ""}" title="${esc(cell.reason)}">${sc.segs[k].empty ? "·" : cell.notSung ? "—" : cell.score}${lk ? "🔒" : ""}<i>${esc(sc.segs[k].empty ? "" : cell.reason)}</i></td>`; }
     h += `<td class="acts"><button class="mini" data-act="solo" data-id="${esc(t.id)}" title="Hear only this take (loudness matched)">${state.listen === t.id ? "◉" : "○"} solo</button><button class="mini" data-act="ex" data-id="${esc(t.id)}">${ex ? "use" : "skip"}</button><button class="mini" data-act="ren" data-id="${esc(t.id)}">rename</button><button class="mini del" data-act="del" data-id="${esc(t.id)}">delete</button></td></tr>`; }
   h += `<tr class="silrow"><td class="nm">Silence</td><td></td>`; for (let k = 0; k < N; k++) h += `<td data-col="${k}" data-seg="${k}" data-take="none" class="cell sil ${locks[k] === "none" ? "lk pick" : ""}">${locks[k] === "none" ? "🔒" : "—"}</td>`; h += `<td></td></tr></tbody></table>`;
   ui.grid.innerHTML = h + incompatHtml(bad);
@@ -778,6 +820,7 @@ function bind(){ for (const id of ["status", "load", "play", "rec", "pos", "grid
   ui.trim.oninput = () => { state.trimDb = +ui.trim.value; saveMix(); paintInput(); if (mic) mic.trim.gain.setTargetAtTime(dbToGain(state.trimDb), ctx.currentTime, 0.01); };
   ui.lat.oninput = () => { state.latFixMs = +ui.lat.value; saveMix(); paintInput(); };
   ui.hearComp.onchange = () => { state.hearCompWhileRec = ui.hearComp.checked; saveMix(); }; ui.recKeys.onchange = () => { state.recordKeys = ui.recKeys.checked; saveMix(); };
+  if ($("recFrom")) { $("recFrom").value = state.recFrom || "top"; $("recFrom").onchange = e => { state.recFrom = e.target.value; save(); }; }
   ui.micBtn.onclick = async () => { if (mic) disableMic(); else { await enableMic(); ui.tap.classList.add("hide"); } };
   ui.audioIn.onchange = async () => { state.audioIn = ui.audioIn.value; saveMix(); if (mic) { disableMic(); await enableMic(); } };
   ui.audioOut.onchange = async () => { state.audioOut = ui.audioOut.value; saveMix(); await applySink(); };
@@ -814,7 +857,7 @@ async function boot(){ bind(); paintAll();
 
 // test hook for QA (same code paths as the UI)
 window.__takekit = { state, setSetting, ensureCtx, start, stop, startRec, exportWavBytes, exportMidBytes, exportStemsBytes, saveFile, trySave, paintAll, expScope, gated, configured, renderMix, regions, importFiles, comps, scoresFor, renderVoice, voiceBuffer, makeupFor,
-  takes: () => takes, midiTakes, ready: () => loading.size === 0 && Object.keys(bufs).length > 0 && missingLabels(filesFor(neededInsts())).length === 0, play: () => play, active: () => active.size, liveVoices: () => liveVoices.size, sustainOn: () => sustain, INST, KIT, SAMPLES, bufs: () => Object.keys(bufs).length, latencyS, segLabel, ctx: () => ctx, measureStopSilence, missingLabels, neededInsts, filesFor, liveOn, liveOff, setSustain, onMidi, lic, LEMON, choiceFor, playing: () => !!play, recording: () => !!rec,
+  takes: () => takes, midiTakes, ready: () => loading.size === 0 && Object.keys(bufs).length > 0 && missingLabels(filesFor(neededInsts())).length === 0, play: () => play, active: () => active.size, liveVoices: () => liveVoices.size, sustainOn: () => sustain, INST, KIT, SAMPLES, bufs: () => Object.keys(bufs).length, latencyS, segLabel, ctx: () => ctx, measureStopSilence, missingLabels, neededInsts, filesFor, liveOn, liveOff, setSustain, onMidi, lic, LEMON, choiceFor, playing: () => !!play, recording: () => !!rec, recState: () => rec && { passes: rec.passes.map(p => Object.assign({}, p)), at: rec.at, end: rec.end }, curBar, keepPartial, recErr, enableMic, disableMic, mic: () => mic, idb, peak: () => peakHold,
   async importBytes(b64, name){ const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < u.length; i++) u[i] = bin.charCodeAt(i); return importFiles([new File([u], name || "take.wav", { type: "audio/wav" })]); },
   seekBar, regions, playRange, chordAt, energyAt, normSections, defaultSections, barLog: () => window.__barLog, cue: () => cue, lock(l, k, id){ state.locks[l][k] = id; save(); paintTakes(); }, paintTakes, enableMic };
 normSections(); boot();

@@ -54,8 +54,11 @@
   <button id="play" class="big">▶ Play song</button>
   <button id="rec" class="big recb">● Record takes</button>
   <label class="loopt"><input id="loopOn" type="checkbox"> Loop this section</label>
+  <label class="loopt">Record from <select id="recFrom"><option value="top">top (song or loop)</option><option value="here">current bar</option><option value="sec">punch-in: this section only</option></select></label>
   <div class="pos"><span id="pos">—</span></div>
   <div id="tl" class="tl" title="Click a bar or a section name to jump there"></div>
+  <div id="recErr" class="recerr" role="alert" hidden></div>
+  <div id="recHud" class="rechud" role="status" aria-live="polite" hidden><b class="dot">● REC</b><span id="recInfo"></span><div class="rmeter" title="Input level"><div id="recMeter"></div></div><div class="rgrow" title="Take progress"><div id="recGrow"></div></div></div>
   <div id="status" class="status" role="status">Your BPM, key and chords come first. Then sing a few passes.</div>
   <div id="load" class="load">Loading samples…</div>
 </section>
@@ -70,6 +73,7 @@
     <button id="clearTakes" class="mini del">Clear all takes</button>
   </div>
   <p id="match" class="hint"></p>
+  <div id="liveTake" class="livetake" hidden><span></span><b><i></i></b></div>
   <div id="grid" class="gridwrap"></div>
   <p class="hint">Click any score to use that take there and lock it 🔒 (click again to unlock). Auto-comp never overrides a lock. Hover a score to see its reason. <em class="tag">A</em> marks the best whole take.</p>
   <div id="why" class="why"></div>
