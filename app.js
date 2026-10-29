@@ -540,7 +540,7 @@ async function saveFile(data, name, type, auto){ const blob = data instanceof Bl
   if (lastSave && lastSave.url) URL.revokeObjectURL(lastSave.url); lastSave = { blob, file, name, type, url: URL.createObjectURL(blob) }; paintSave();
   if (auto === false) return "ready";
   return trySave(); }
-async function trySave(){ const f = lastSave; if (!f) return "none"; const mb = (f.blob.size / 1048576).toFixed(1) + " MB";
+async function trySave(){ const f = lastSave; if (!f) return "none"; const mb = fmtSize(f.blob.size);
   if (isIOS() && f.file && navigator.canShare && navigator.share) { let ok = false; try { ok = navigator.canShare({ files: [f.file] }); } catch (e) {}
     if (ok) { try { await navigator.share({ files: [f.file], title: f.name }); expMsg(`Shared ${f.name} (${mb}). In the share sheet pick "Save to Files" to keep it.`, "ok"); return "shared"; }
       catch (e) { if (e.name === "AbortError") { expMsg(`Share cancelled. ${f.name} is ready: tap "Save ${f.name}" below to try again.`, "warn"); return "cancelled"; }
@@ -549,8 +549,9 @@ async function trySave(){ const f = lastSave; if (!f) return "none"; const mb = 
   const w = window.open(f.url, "_blank"); if (!w) { expMsg(`Your browser blocked the download. Tap "Save ${f.name}" below.`, "warn"); return "blocked"; } return "opened"; }
 function download(bytes, name, type){ return saveFile(bytes, name, type); }
 function paintSave(){ const el = document.getElementById("saveRow"); if (!el) return; const f = lastSave; el.hidden = !f; if (!f) return;
-  el.innerHTML = `<button id="saveBtn" class="mini">Save ${esc(f.name)}</button> <a id="saveLink" href="${f.url}" download="${esc(f.name)}" target="_blank" rel="noopener">or open it</a> <span class="hint">${(f.blob.size / 1048576).toFixed(1)} MB</span>`;
+  el.innerHTML = `<button id="saveBtn" class="mini">Save ${esc(f.name)}</button> <a id="saveLink" href="${f.url}" download="${esc(f.name)}" target="_blank" rel="noopener">or open it</a> <span class="hint">${fmtSize(f.blob.size)}</span>`;
   document.getElementById("saveBtn").onclick = () => trySave(); }
+const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
 function expMsg(m, cls){ setStatus(m); const el = document.getElementById("expMsg"); if (el) { el.textContent = m; el.className = "expmsg " + (cls || ""); } }
 function expProgress(p){ const el = document.getElementById("expProg"); if (!el) return; el.hidden = p == null; if (p != null) el.value = p; }
 
@@ -723,7 +724,7 @@ function paintInput(){ const g = state.gate; ui.gateOn.checked = g.on; ui.monito
   ui.hearComp.checked = state.hearCompWhileRec; ui.recKeys.checked = state.recordKeys; }
 function paintLicense(){ const b = ui.buy; if (configured() && LEMON.checkoutUrl) { b.textContent = "Unlock TakeKit · " + LEMON.price; b.disabled = false; b.onclick = () => window.open(LEMON.checkoutUrl, "_blank", "noopener"); }
   else { b.textContent = "Checkout opening soon · " + LEMON.price; b.disabled = true; }
-  ui.licState.textContent = !configured() ? `${LAUNCH_NOTE} WAV, MIDI, stems ZIP and LRC of the whole song, unlimited takes. (${LEMON.price} once when checkout opens.)` : lic.valid ? "Unlocked: full-song exports, stems ZIP with every raw take, unlimited takes." : `Free: play, record, score and comp the whole song; WAV + MIDI exports up to ${FREE_BARS} bars; ${FREE_TAKES} takes per lane. Unlock adds full-song exports, stems (every raw take + the comp) and unlimited takes.`;
+  ui.licState.textContent = !configured() ? `${LAUNCH_NOTE} WAV, MIDI, stems ZIP and LRC of the whole song, unlimited takes. (${LEMON.price} when checkout opens.)` : lic.valid ? "Unlocked: full-song exports, stems ZIP with every raw take, unlimited takes." : `Free: play, record, score and comp the whole song; WAV + MIDI exports up to ${FREE_BARS} bars; ${FREE_TAKES} takes per lane. Unlock adds full-song exports, stems (every raw take + the comp) and unlimited takes.`;
   ui.stems.textContent = gated() ? "Export stems ZIP 🔒" : "Export stems ZIP"; paintExportBtns(); }
 function paintKeys(){ const lo = state.kbdOct * 12 + 12, wk = [], bk = []; let wi = 0;
   for (let n = lo; n < lo + 25; n++) { const blk = [1, 3, 6, 8, 10].includes(pc(n)), lab = KEYMAP[n - lo] || ""; if (blk) bk.push(`<div class="bk" data-n="${n}" style="left:${wi * 34 - 11}px">${lab}</div>`); else { wk.push(`<div class="wk" data-n="${n}">${lab}<small>${pc(n) === 0 ? noteName(n) : ""}</small></div>`); wi++; } }
