@@ -27,7 +27,7 @@ async def main():
   async with async_playwright() as p:
     br=await p.chromium.launch(args=ARGS); ctx=await br.new_context(viewport={'width':1360,'height':1000}); pg=await ctx.new_page(); errs=[]
     pg.on('pageerror',lambda e:errs.append(str(e))); pg.on('console',lambda m: m.type=='error' and errs.append(m.text))
-    await pg.goto(URL); await pg.evaluate("()=>{localStorage.clear(); indexedDB.deleteDatabase('takekit')}"); await pg.reload(); await boot(pg)
+    await pg.goto(URL); await pg.evaluate("()=>{localStorage.clear(); indexedDB.deleteDatabase('takekit')}"); await pg.reload(); await boot(pg); await setv(pg,'bars',8)
     R['defaults']=await pg.evaluate(f"()=>({{src:{F}.state.src, chain:{F}.state.chain.preset, chainOn:{F}.state.chain.on, recOnly:{F}.state.guide.recOnly}})")
     # ---- fixture backing = TakeKit's own band export (real samples), padded with 300 ms of silence, two loops long
     sr,n,band=await wav(pg); assert n==EXP
@@ -40,6 +40,8 @@ async def main():
     R['bad_file']={'msg':await pg.text_content('#bkErr'),'loaded':await pg.evaluate(f"()=>{P}.isBk()")}; R['bad_file']['pass']="can't decode" in R['bad_file']['msg'] and not R['bad_file']['loaded']
     # ---- upload backing, user BPM respected, offset, alignment
     await pg.set_input_files('#bkFile',FX+'/backing-92bpm-Am-pad300.wav'); await pg.wait_for_function(f"{P}.isBk()")
+    R['default_whole_track']={'whole':await pg.evaluate(f"()=>{F}.state.bk.whole"),'bars':await pg.evaluate(f"()=>{F}.state.bars")}; R['default_whole_track']['pass']=R['default_whole_track']['whole'] and R['default_whole_track']['bars']==16
+    await pg.uncheck('#bkWhole'); await setv(pg,'bars',8)  # the 8-bar alignment/loop checks below opt out of whole-track
     await setv(pg,'bpm',100); await pg.wait_for_timeout(200); sug=await pg.text_content('#bkBpm'); bpm_after=await pg.evaluate(f"()=>{F}.state.bpm"); await setv(pg,'bpm',92)
     R['bpm']={'suggestion':sug,'user_bpm_kept':bpm_after==100,'pass':bpm_after==100 and '92 BPM' in sug}
     await pg.fill('#bkOff','300'); await pg.press('#bkOff','Tab'); await pg.evaluate(f"()=>{{ {F}.state.bk.vol=1; }}")
@@ -50,7 +52,7 @@ async def main():
     # ---- whole-track mode
     await pg.check('#bkWhole'); whole=await pg.evaluate(f"()=>{F}.state.bars"); await pg.uncheck('#bkWhole'); R['whole_track']={'bars':whole,'pass':whole==16 and await pg.evaluate(f"()=>{F}.state.bars")==8}
     # ---- loop drift over 4 loops (4 bars @ 92 = 10.43 s per loop) + takes share the grid
-    await setv(pg,'bars',4); await pg.evaluate("()=>{window.__bkLog.length=0; window.__schedLog.length=0}"); await pg.click('#play'); await pg.wait_for_timeout(int(4*4*60/92*4*1000)+2500); await pg.click('#play')
+    await setv(pg,'loop',True); await setv(pg,'bars',4); await pg.evaluate("()=>{window.__bkLog.length=0; window.__schedLog.length=0}"); await pg.click('#play'); await pg.wait_for_timeout(int(4*4*60/92*4*1000)+2500); await pg.click('#play')
     lg=await pg.evaluate("()=>window.__bkLog"); sl=await pg.evaluate("()=>window.__schedLog.filter(e=>e.step===0).map(e=>e.time)")
     bd=4*60/92; t0=lg[0]['t']; dr=[(e['t']-(t0+i*bd))*48000 for i,e in enumerate(lg)]; offs=[round(e['off'],6) for e in lg]
     R['loop_drift']={'bars_scheduled':len(lg),'loops':len(lg)/4,'max_drift_samples':round(max(abs(x) for x in dr),6),'file_offsets_per_loop':[offs[i:i+4] for i in range(0,16,4)],

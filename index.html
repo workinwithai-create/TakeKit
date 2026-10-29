@@ -14,11 +14,15 @@
     <label>BPM <input id="bpm" type="number" min="60" max="180" step="1"></label>
     <label>Key <select id="key"></select> <select id="mode"><option value="minor">minor</option><option value="major">major</option></select></label>
     <label class="grow">Chords (one per bar) <input id="chords" type="text" spellcheck="false" placeholder="Am F C G"></label>
-    <label>Bars <select id="bars"><option value="4">4</option><option value="8">8</option><option value="16">16</option></select></label>
-    <label>Backing <select id="src"><option value="band">Band (built-in)</option><option value="backing">Backing track (your file)</option></select></label>
+    <label>Length <select id="bars"></select></label>
+    <label>Backing <select id="src"><option value="band">Band (built-in)</option><option value="backing">Backing track (your file)</option><option value="both">Band + your upload (layered)</option></select></label>
     <label>Band <select id="recipe"></select> <button id="presetBpm" class="mini" title="Use this style's preset tempo">preset tempo</button></label>
   </div>
   <p class="hint"><span id="chordErr"></span> <span id="recipeNote"></span> <span id="barsNote" class="warn"></span></p>
+  <div id="secBox" class="secs"><div class="row"><b>Song structure</b> <span id="songLen" class="hint"></span><button id="secAdd" class="mini">+ section</button><button id="secReset" class="mini">Default full song (64 bars)</button></div>
+    <div id="secList"></div><p class="hint">Each section: name, bars, its own chords (one per bar, repeating; empty = your chords above) and energy (the band thins out in quiet sections). 🔒 keeps a section through re-analysis.</p></div>
+  <div id="anBox" class="secs"><div class="row"><b>Build band from upload</b> <button id="anBk" class="mini">Analyze my backing</button><button id="anFileBtn" class="mini">Analyze an audio or MIDI file…</button><input id="anFile" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a,.aac,.ogg,.aif,.aiff,.mid,.midi" hidden><button id="anRe" class="mini" disabled>Re-analyze</button></div>
+    <div id="anOut" class="hint">Upload a backing, demo, guide vocal or MIDI file: TakeKit finds the tempo, downbeat, key, chords per bar, sections and section energy in your browser (nothing is uploaded), then shows them here for review before the band uses them. Your own BPM and key always win.</div></div>
 </section>
 
 <section class="card backing"><h2>1b · Backing track &amp; guide vocal <small>(files stay in this browser)</small></h2>
@@ -47,9 +51,11 @@
 </section>
 
 <section class="card transport">
-  <button id="play" class="big">▶ Play loop</button>
+  <button id="play" class="big">▶ Play song</button>
   <button id="rec" class="big recb">● Record takes</button>
+  <label class="loopt"><input id="loopOn" type="checkbox"> Loop this section</label>
   <div class="pos"><span id="pos">—</span></div>
+  <div id="tl" class="tl" title="Click a bar or a section name to jump there"></div>
   <div id="status" class="status" role="status">Your BPM, key and chords come first. Then sing a few passes.</div>
   <div id="load" class="load">Loading samples…</div>
 </section>
@@ -131,7 +137,7 @@
 <section class="card mixer"><h2>5 · Mix</h2><div id="mix" class="mix"></div><p class="hint">Every chair → master → safety limiter. Exports skip the limiter and are peak-normalised to −1 dBFS.</p></section>
 
 <section class="card export"><h2>6 · Export</h2>
-  <div class="row"><button id="wav">Export WAV</button><button id="mid">Export MIDI</button><button id="stems">Export stems ZIP</button>
+  <div class="row"><button id="wav">Export WAV</button><button id="mid">Export MIDI</button><button id="stems">Export stems ZIP</button><span id="expNote" class="hint"></span>
     <label><input id="bkInc" type="checkbox"> Include backing in the mix</label><label>Vocal <select id="chExport"><option value="chain">with chain</option><option value="dry">dry</option></select></label></div>
   <p class="hint">48 kHz / 24-bit stereo at exactly your bar length with the downbeat on sample 0. It drops onto your DAW grid and loops without clicks. The MIDI has tempo, 4/4, a track per chair, every MIDI take, and markers naming the take used in each segment. Files are named <code>takekit-&lt;band&gt;-&lt;bpm&gt;bpm-&lt;key&gt;</code>.</p>
   <div class="lic"><button id="buy" disabled>Checkout opening soon</button> <input id="licKey" placeholder="License key"> <button id="licBtn" class="mini">Activate</button> <span id="licState" class="hint"></span></div>
@@ -140,4 +146,5 @@
 <footer><p>Real samples only: FluidR3 GM (MIT) pinned to commit <code>044fab8</code> via jsDelivr, plus the Virtuosity Drums kit (CC0), bundled. See <a href="samples/CREDITS.md">credits</a>. Reverb IR: "KONSA_HALL_1" by lehtoroni (kajahdus, CC0), bundled. Takes, backing and guide files stay in this browser (IndexedDB); nothing is uploaded.</p><p>© 2026 WorkinWithAI · TakeKit</p></footer>
 <script src="app.js"></script>
 <script src="pro.js"></script>
+<script src="analyze.js"></script>
 </body></html>

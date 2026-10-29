@@ -91,12 +91,30 @@ const DEFAULT = { bpm: 92, keyRoot: 9, mode: "minor", chords: "Am F C G", bars: 
   gains: { drums: 0.8, bass: 0.9, keys: 0.8, pad: 0.6, play: 0.9 }, mutes: { drums: false, bass: false, keys: false, pad: false, play: false },
   voiceGain: 1, voiceMute: false, master: 0.9, liveGain: 0.9, liveInst: "piano", kbdOct: 4, recordKeys: false,
   audioIn: "", audioOut: "", midiIn: "", midiOut: "", monitor: true, gate: { on: true, th: -50, atk: 2, hold: 60, rel: 120 }, trimDb: 0, latFixMs: 0,
-  listen: "comp", hearCompWhileRec: false, locks: { voice: {}, midi: {} }, excluded: {}, midiTakes: [], takeNames: {}, nextTake: 1 };
+  listen: "comp", hearCompWhileRec: false, sections: null, loop: false, loopSec: 0, secSrc: "user", userSet: { bpm: false, key: false }, sv: 2, locks: { voice: {}, midi: {} }, excluded: {}, midiTakes: [], takeNames: {}, nextTake: 1 };
 const state = Object.assign(JSON.parse(JSON.stringify(DEFAULT)), loadJSON(APP + "-settings") || {});
-for (const k of ["weights", "gains", "mutes", "gate", "locks"]) state[k] = Object.assign(JSON.parse(JSON.stringify(DEFAULT[k])), state[k] || {});
+if (state.sv !== 3) { state.sv = 3; state.loop = false; if (state.bk) state.bk.whole = true; } // full song by default (looping is opt-in)
+for (const k of ["weights", "gains", "mutes", "gate", "locks", "userSet"]) state[k] = Object.assign(JSON.parse(JSON.stringify(DEFAULT[k])), state[k] || {});
 let ver = 1; const save = () => { ver++; localStorage.setItem(APP + "-settings", JSON.stringify(state)); };
 const prog = () => parseProg(state.chords) || parseProg("Am F C G");
-const chordAt = b => { const p = prog(); return p[b % p.length]; };
+// ---------- song structure: sections play start to finish; "Loop this section" is opt-in ----------
+const DEF_SECS = [["Intro", 8, 0, 0.45], ["Verse 1", 8, 0, 0.7], ["Chorus", 8, 2, 1], ["Verse 2", 8, 0, 0.7], ["Chorus", 8, 2, 1], ["Bridge", 8, 1, 0.8], ["Chorus", 8, 2, 1], ["Outro", 8, 0, 0.45]];
+const defaultSections = () => DEF_SECS.map(([name, bars, rot, energy]) => ({ name, bars, chords: "", rot, energy, lock: false }));
+function parseSecProg(str){ const t = tokens(str); if (t.length < 1 || t.length > 64) return null; const c = t.map(parseChord); return c.includes(null) ? null : c; }
+function secProg(s){ const p = s && s.chords ? parseSecProg(s.chords) : null; if (p) return p; const m = prog(), r = ((s && s.rot) || 0) % m.length; return m.slice(r).concat(m.slice(0, r)); }
+function normSections(){ if (!Array.isArray(state.sections) || !state.sections.length) state.sections = defaultSections();
+  state.sections = state.sections.slice(0, 48).map((x, i) => ({ name: String(x.name || "Section " + (i + 1)).slice(0, 24), bars: clamp(Math.round(+x.bars || 8), 1, 128), chords: String(x.chords || "").slice(0, 400), rot: Math.round(+x.rot || 0), energy: clamp(x.energy == null ? 1 : +x.energy, 0, 1), lock: !!x.lock, conf: x.conf == null ? null : +x.conf }));
+  if (state.src === "band") state.bars = Math.min(1024, state.sections.reduce((a, x) => a + x.bars, 0)); }
+let regCache = { key: "", v: [] };
+function regions(){ const key = JSON.stringify([state.sections, state.bars, state.src, state.secSrc, state.chords]); if (regCache.key === key) return regCache.v;
+  const out = [], useSecs = state.src === "band" || state.secSrc === "upload"; let b = 0;
+  if (useSecs) for (const s of state.sections) { if (b >= state.bars) break; const b1 = Math.min(state.bars, b + s.bars); out.push({ name: s.name, b0: b, b1, sec: s, p: secProg(s) }); b = b1; }
+  while (b < state.bars) { const b1 = Math.min(state.bars, b + 8); out.push({ name: b1 - b === state.bars ? "Loop" : `Bars ${b + 1}–${b1}`, b0: b, b1, sec: null, p: null }); b = b1; }
+  regCache = { key, v: out }; return out; }
+const regionAt = b => { const rs = regions(); for (const r of rs) if (b >= r.b0 && b < r.b1) return r; return rs[rs.length - 1]; };
+const chordAt = b => { const r = regionAt(b); if (r && r.p) return r.p[(b - r.b0) % r.p.length]; const p = prog(); return p[b % p.length]; };
+const energyAt = b => { const r = regionAt(b); return r && r.sec ? r.sec.energy : 1; };
+function playRange(){ if (state.loop) { const r = regions()[clamp(state.loopSec, 0, regions().length - 1)]; if (r) return [r.b0 * STEPS, r.b1 * STEPS]; } return [0, loopSteps()]; }
 const loopSteps = () => state.bars * STEPS;
 const stepDur = () => 60 / state.bpm / 4;
 const loopDur = () => state.bars * 4 * 60 / state.bpm;
@@ -104,8 +122,8 @@ const nSeg = () => Math.max(1, Math.round(state.bars / state.seg));
 
 // ---------- band: one recipe per style, read fresh every step (live changes apply on the next step) ----------
 const E = (ch, i, n, s, d, v) => ({ ch, i, n, s, d, v });
-function bandEvents(st){ const out = [], R = st.recipe, p = parseProg(st.chords) || parseProg("Am F C G"); let prev = null;
-  for (let b = 0; b < st.bars; b++) { const c = p[b % p.length], s0 = b * STEPS, v = voicing(c, 55, 74, prev, 4), bn = bassOf(c, 33, 48), fifth = fold(bn + 7, 33, 52); prev = v;
+function bandEvents(st){ const all = [], R = st.recipe; let prev = null;
+  for (let b = 0; b < st.bars; b++) { const c = chordAt(b), s0 = b * STEPS, en = energyAt(b), out = [], v = voicing(c, 55, 74, prev, 4), bn = bassOf(c, 33, 48), fifth = fold(bn + 7, 33, 52); prev = v;
     if (R === "ballad") { for (const s of [0, 8]) for (const n of v) out.push(E("keys", "piano", n, s0 + s, 8, s ? 0.42 : 0.5));
       for (const n of voicing(c, 52, 72, null, 3)) out.push(E("pad", "strings", n, s0, 16, 0.5)); out.push(E("bass", "finger", bn, s0, 16, 0.7));
       out.push(E("drums", "kit", D.kick, s0, 1, 0.8)); out.push(E("drums", "kit", D.rim, s0 + 8, 1, 0.6)); for (let s = 0; s < 16; s += 4) out.push(E("drums", "kit", D.hat, s0 + s, 1, 0.3)); }
@@ -118,8 +136,10 @@ function bandEvents(st){ const out = [], R = st.recipe, p = parseProg(st.chords)
       for (const [s, n, d, vv] of [[0, bn, 3, 0.8], [3, bn, 1, 0.55], [6, bn, 2, 0.65], [10, fifth, 2, 0.6], [14, fold(bn + 12, 33, 56), 1, 0.55]]) out.push(E("bass", "finger", n, s0 + s, d, vv));
       for (const s of [0, 7, 10]) out.push(E("drums", "kit", D.kick, s0 + s, 1, s === 0 ? 0.9 : 0.7)); for (const s of [4, 12]) out.push(E("drums", "kit", D.snare, s0 + s, 1, 0.85));
       out.push(E("drums", "kit", D.ghost, s0 + 15, 1, 0.4)); for (let s = 0; s < 16; s++) out.push(E("drums", "kit", s === 14 ? D.ohat : D.hat, s0 + s, 1, s % 2 ? 0.18 : 0.32)); }
-    else { for (const n of v) out.push(E("keys", "piano", n, s0, 16, 0.5)); } }
-  return out; }
+    else { for (const n of v) out.push(E("keys", "piano", n, s0, 16, 0.5)); }
+    // section energy (detected or set by you): quiet sections drop the drums and thin the hats, all parts scale in velocity
+    for (const e of out) { if (en < 0.35 && e.ch === "drums") continue; if (en < 0.6 && e.ch === "drums" && e.n === D.hat && (e.s - s0) % 4) continue; e.v = Math.round(e.v * (0.55 + 0.45 * en) * 1000) / 1000; all.push(e); } }
+  return all; }
 
 // ---------- takes ----------
 let takes = [];                  // audio takes: { id, name, lane:"voice", sr, data, bpm, bars, an }
@@ -130,7 +150,7 @@ const laneTakes = lane => lane === "voice" ? takes : midiTakes();
 const idb = { db: null,
   open(){ if (this.db) return Promise.resolve(this.db); return new Promise((res, rej) => { const r = indexedDB.open(APP, 2); r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains("takes")) d.createObjectStore("takes", { keyPath: "id" }); if (!d.objectStoreNames.contains("files")) d.createObjectStore("files", { keyPath: "id" }); }; r.onsuccess = () => res(this.db = r.result); r.onerror = () => rej(r.error); }); },
   async tx(mode, fn){ const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction("takes", mode), s = t.objectStore("takes"), r = fn(s); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); }); },
-  put(t){ return this.tx("readwrite", s => s.put({ id: t.id, name: t.name, sr: t.sr, data: t.data, bpm: t.bpm, bars: t.bars, created: t.created })).catch(() => {}); },
+  put(t){ return this.tx("readwrite", s => s.put({ id: t.id, name: t.name, sr: t.sr, data: t.data, bpm: t.bpm, bars: t.bars, region: t.region, created: t.created })).catch(() => {}); },
   del(id){ return this.tx("readwrite", s => s.delete(id)).catch(() => {}); },
   clear(){ return this.tx("readwrite", s => s.clear()).catch(() => {}); },
   all(){ return this.tx("readonly", s => s.getAll()).catch(() => []); } };
@@ -322,7 +342,7 @@ function applyMix(){ if (!bus) return; const now = ctx.currentTime; for (const c
   bus.master.gain.setTargetAtTime(state.master, now, 0.01); bus.live.gain.setTargetAtTime(state.liveGain, now, 0.01); bus.voice.gain.setTargetAtTime(state.voiceMute ? 0 : state.voiceGain, now, 0.01); if (window.__pro) window.__pro.apply(); }
 
 // ---------- transport: audio-clock lookahead scheduler; the loop repeats; every pass can be a take ----------
-let play = null, timerId = null; const stepLog = []; window.__schedLog = [];
+let play = null, timerId = null; const stepLog = []; window.__schedLog = []; window.__barLog = [];
 let voiceLive = { key: "", buf: null, makeup: 1 };
 function voiceBuffer(){ const key = ver + "|" + takes.length + "|" + state.listen + "|" + (ctx ? ctx.sampleRate : 0); if (voiceLive.key === key) return voiceLive;
   if (!takes.length || !ctx) { voiceLive = { key, buf: null, makeup: 1 }; return voiceLive; }
@@ -336,14 +356,25 @@ function scheduleVoiceBar(bar, t, first){ if (rec && !state.hearCompWhileRec) re
   g.gain.setValueAtTime(head ? 0 : 1, st); if (head) g.gain.linearRampToValueAtTime(1, st + 2 * pre); g.gain.setValueAtTime(1, st + len - 2 * pre); g.gain.linearRampToValueAtTime(0, st + len);
   src.connect(g); g.connect(bus.ab); bus.ab.gain.setValueAtTime(v.makeup, st); src.start(st, Math.max(0, so), len); src.stop(st + len + 0.005); const r = { src, g }; active.add(r); src.onended = () => active.delete(r); }
 function start(){ if (!ctx || ctx.state !== "running") return false; const miss = missingLabels(filesFor(neededInsts())); if (miss.length) { setStatus("Can't play: " + miss.join(", ") + " didn't load."); return false; }
-  stop(true); if (armNext) { rec = { passes: [], made: 0 }; armNext = false; } play = { step: 0, nextT: ctx.currentTime + 0.1, first: true }; stepLog.length = 0; timerId = setInterval(scheduler, LOOKAHEAD_MS); scheduler(); requestAnimationFrame(draw); paintTransport(); return true; }
+  stop(true); const [lo, hi] = playRange(); let from = armNext || cue == null ? lo : cue * STEPS; if (from < lo || from >= hi) from = lo;
+  if (armNext) { rec = { passes: [], made: 0 }; armNext = false; } play = { step: from, nextT: ctx.currentTime + 0.1, first: true, endT: null }; stepLog.length = 0; timerId = setInterval(scheduler, LOOKAHEAD_MS); scheduler(); requestAnimationFrame(draw); paintTransport(); return true; }
 function scheduler(){ if (!play) return; const sd = stepDur();
-  while (play.nextT < ctx.currentTime + SCHEDULE_AHEAD) { if (play.step >= loopSteps()) play.step = 0; scheduleStep(play.step, play.nextT, sd); play.nextT += sd; play.step++; }
-  if (rec) recTick(); }
+  while (play.endT == null && play.nextT < ctx.currentTime + SCHEDULE_AHEAD) { const [lo, hi] = playRange();
+    if (play.step >= hi || play.step < lo) { if (state.loop) { play.step = lo; play.first = true; } else { play.endT = play.nextT; break; } } // whole song: stop at the end; loop: wrap to the section start
+    scheduleStep(play.step, play.nextT, sd); play.nextT += sd; play.step++; }
+  if (rec) recTick();
+  if (play && play.endT != null && ctx.currentTime > play.endT + latencyS() + 0.15) { if (rec) recTick(); const made = rec ? rec.made : 0; stop(true); cue = 0; paintPlayhead(0); setStatus(`Reached the end of the song (${state.bars} bars).` + (made ? ` Kept ${made} take${made > 1 ? "s" : ""}.` : "") + " Press Play to hear it from the top."); } }
+let cue = 0;
+// click a bar or section: jump there on the audio clock (looping follows the section you jump into)
+function seekBar(bar){ bar = clamp(Math.floor(+bar || 0), 0, state.bars - 1); cue = bar; const ri = regions().indexOf(regionAt(bar));
+  if (state.loop && ri !== state.loopSec) { state.loopSec = ri; saveMix(); }
+  if (play) { const now = ctx.currentTime; for (const r of active) fastRelease(r, now); active.clear(); play.step = bar * STEPS; play.nextT = now + 0.06; play.first = true; play.endT = null; stepLog.length = 0;
+    if (rec && rec.passes.length) { rec.passes.length = 0; setStatus("Jumped: the unfinished pass was dropped. A take starts when a full pass begins."); } scheduler(); }
+  paintPlayhead(bar * STEPS); paintTimeline(); return true; }
 function scheduleStep(k, time, sd){ const sg = song(), evs = sg.byStep.get(k) || [], heard = [];
-  if (k === 0 && rec) rec.passes.push({ t0: time, bpm: state.bpm, bars: state.bars });
+  if (rec && k === playRange()[0]) { const [lo, hi] = playRange(); rec.passes.push({ t0: time, bpm: state.bpm, bars: state.bars, b0: lo / STEPS, b1: hi / STEPS }); }
   for (const e of evs) { if (state.mutes[e.ch]) continue; const t = time + (e.abs - k) * sd; playEvent(ctx, bus.chairs[e.ch], e, t, sd, true); midiSend(e, t, sd); heard.push(e.ch + ":" + e.n); }
-  if (k % STEPS === 0) { if (window.__pro) window.__pro.bar(k / STEPS, time, play.first); scheduleVoiceBar(k / STEPS, time, play.first); play.first = false; }
+  if (k % STEPS === 0) { const rg = regionAt(k / STEPS); window.__barLog.push({ bar: k / STEPS, time, sec: rg ? rg.name : "", b0: rg ? rg.b0 : 0 }); if (window.__barLog.length > 4000) window.__barLog.shift(); if (window.__pro) window.__pro.bar(k / STEPS, time, play.first); scheduleVoiceBar(k / STEPS, time, play.first); play.first = false; }
   stepLog.push({ s: k, time }); if (stepLog.length > 512) stepLog.shift();
   window.__schedLog.push({ step: k, time, ver, bpm: state.bpm, recipe: state.recipe, keyRoot: state.keyRoot, listen: state.listen, notes: heard, voice: k % STEPS === 0 && voiceLive.buf ? voiceLive.key : null }); if (window.__schedLog.length > 4000) window.__schedLog.shift(); }
 function stop(quiet){ clearInterval(timerId); timerId = null; const was = !!play; play = null;
@@ -362,17 +393,17 @@ const FREE_BARS = 8, FREE_TAKES = 6;
 async function startRec(){ await ensureCtx(); if (!mic && !midiInPort && !state.recordKeys) { setStatus("Turn the mic on or pick a MIDI input first (or tick ‘Record on-screen keys too’)."); return false; }
   if (!lic.valid && takes.length >= FREE_TAKES && midiTakes().length >= FREE_TAKES) { setStatus(`The free version keeps ${FREE_TAKES} takes per lane. Delete one or unlock TakeKit.`); return false; }
   const wasPlaying = !!play; capChunks.length = 0; recNotes.length = 0;
-  if (wasPlaying) rec = { passes: [], made: 0 }; else { armNext = true; if (!start()) { armNext = false; return false; } }
+  if (wasPlaying && state.loop) rec = { passes: [], made: 0 }; else { cue = null; armNext = true; if (!start()) { armNext = false; return false; } }
   if (mic) mic.node.port.postMessage({ rec: true });
-  paintTransport(); setStatus(wasPlaying ? "Armed: takes start at the top of the next pass." : "Recording. Every full pass of the loop becomes a take. Press Stop when you're done."); return true; }
+  paintTransport(); setStatus(wasPlaying ? "Armed: takes start at the top of the next pass." : (state.loop ? "Recording the looped section: every full pass becomes a take. Press Stop when you're done." : `Recording the whole song (${state.bars} bars, start to finish) as one take. It stops at the end.`)); return true; }
 function latencyS(){ return (ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0) + (mic ? mic.inLat : 0) + state.latFixMs / 1000; }
-function recTick(){ while (rec && rec.passes.length) { const p = rec.passes[0], ld = p.bars * 4 * 60 / p.bpm; if (ctx.currentTime > p.t0 + ld + latencyS() + 0.06) finishPass(rec.passes.shift()); else break; } }
-function finishPass(p){ const ld = p.bars * 4 * 60 / p.bpm, made = []; let num = 0; const passNo = () => num || (num = state.nextTake++);
+function recTick(){ while (rec && rec.passes.length) { const p = rec.passes[0], ld = (p.b1 - p.b0) * 4 * 60 / p.bpm; if (ctx.currentTime > p.t0 + ld + latencyS() + 0.06) finishPass(rec.passes.shift()); else break; } }
+function finishPass(p){ const ld = (p.b1 - p.b0) * 4 * 60 / p.bpm, off = p.b0 * 4 * 60 / p.bpm, made = []; let num = 0; const passNo = () => num || (num = state.nextTake++);
   if (p.bpm !== state.bpm || p.bars !== state.bars) { setStatus("Tempo or length changed during the pass, so it wasn't kept as a take."); return; }
   if (!lic.valid && takes.length >= FREE_TAKES && midiTakes().length >= FREE_TAKES) { setStatus(`Free version: ${FREE_TAKES} takes per lane reached. Unlock for unlimited takes.`); return; }
-  if (mic && (lic.valid || takes.length < FREE_TAKES)) { const data = sliceCapture(p.t0, ld); let pk = 0; for (let i = 0; i < data.length; i++) pk = Math.max(pk, Math.abs(data[i]));
-    if (pk > 0.003) { const t = { id: "v" + Date.now().toString(36) + state.nextTake, name: "Take " + passNo(), lane: "voice", sr: ctx.sampleRate, data, bpm: p.bpm, bars: p.bars, created: Date.now() }; t.an = analyzeAudio(t); takes.push(t); idb.put(t); made.push(t.name); } }
-  const sd = 60 / p.bpm / 4, ns = recNotes.filter(n => n.on >= p.t0 - 0.03 && n.on < p.t0 + ld - 0.03).map(n => ({ n: n.note, v: Math.round(n.vel * 1000) / 1000, s: Math.max(0, Math.round((n.on - p.t0) / sd * 1000) / 1000), d: Math.max(0.25, Math.round((Math.min(n.off != null ? n.off : p.t0 + ld, p.t0 + ld) - n.on) / sd * 1000) / 1000) }));
+  if (mic && (lic.valid || takes.length < FREE_TAKES)) { const part = sliceCapture(p.t0, ld), data = new Float32Array(Math.round(p.bars * 4 * 60 / p.bpm * ctx.sampleRate)), o0 = Math.round(off * ctx.sampleRate); data.set(part.subarray(0, Math.max(0, data.length - o0)), o0); let pk = 0; for (let i = 0; i < data.length; i++) pk = Math.max(pk, Math.abs(data[i]));
+    if (pk > 0.003) { const t = { id: "v" + Date.now().toString(36) + state.nextTake, name: "Take " + passNo(), lane: "voice", sr: ctx.sampleRate, data, bpm: p.bpm, bars: p.bars, region: [p.b0, p.b1], created: Date.now() }; t.an = analyzeAudio(t); takes.push(t); idb.put(t); made.push(t.name); } }
+  const sd = 60 / p.bpm / 4, ns = recNotes.filter(n => n.on >= p.t0 - 0.03 && n.on < p.t0 + ld - 0.03).map(n => ({ n: n.note, v: Math.round(n.vel * 1000) / 1000, s: Math.max(0, Math.round((n.on - p.t0) / sd * 1000) / 1000) + p.b0 * STEPS, d: Math.max(0.25, Math.round((Math.min(n.off != null ? n.off : p.t0 + ld, p.t0 + ld) - n.on) / sd * 1000) / 1000) }));
   if (ns.length && (lic.valid || midiTakes().length < FREE_TAKES)) { const t = { id: "m" + Date.now().toString(36) + state.nextTake, name: "MIDI " + passNo(), lane: "midi", notes: ns, bars: p.bars }; state.midiTakes.push(t); made.push(t.name); }
   const keep = p.t0 + ld - 1; for (let i = capChunks.length - 1; i >= 0; i--) if ((capChunks[i].f + capChunks[i].d.length) / ctx.sampleRate < keep + latencyS()) capChunks.splice(i, 1);
   save(); if (rec) rec.made += made.length; paintTakes(); setStatus(made.length ? `Kept ${made.join(" + ")}. Keep going: the next pass is the next take.` : "That pass was silent, so no take was kept."); }
@@ -453,6 +484,7 @@ function midiFile(){ const PPQ = 480, T = PPQ / 4, total = loopSteps() * T, vlq 
   const c = comps(), N = nSeg(), L = loopSteps() / N;
   for (let k = 0; k < N; k++) { const parts = []; if (takes.length) parts.push("vox " + (c.voice.choice[k] ? takeLabel(c.voice.choice[k]) : "-")); if (midiTakes().length) parts.push("midi " + (c.midi.choice[k] ? takeLabel(c.midi.choice[k]) : "-"));
     cond.push({ t: Math.round(k * L * T), o: 3, b: meta(0x06, `Seg ${k + 1}: ${chName(chordAt(Math.floor(k * L / STEPS)))}${parts.length ? " | " + parts.join(" | ") : ""}`) }); }
+  for (const r of regions()) cond.push({ t: r.b0 * STEPS * T, o: 4, b: meta(0x06, "Section: " + r.name) });
   const tracks = [trk(cond)], evs = exportEvents(); if (window.__pro) { const ly = window.__pro.midiLyrics(T, meta); if (ly.length > 1) tracks.push(trk(ly)); }
   const noteTrack = (name, ch, list, gm) => { const out = [{ t: 0, o: 0, b: meta(0x03, name) }]; if (gm != null) out.push({ t: 0, o: 1, b: [0xC0 | ch, gm] });
     for (const e of list) { const t0 = Math.round(e.abs * T), t1 = Math.min(total, Math.round((e.abs + e.d) * T)), v = clamp(Math.round(e.v * 127), 1, 127); out.push({ t: t0, o: 3, b: [0x90 | ch, e.n, v] }); out.push({ t: Math.max(t0 + 1, e.i === "kit" ? t0 + T / 2 : t1), o: 2, b: [0x80 | ch, e.n, 0] }); }
@@ -551,12 +583,22 @@ function setStatus(m){ if (ui.status) ui.status.textContent = m; }
 function paintLoad(msg){ if (!ui.load) return; const miss = missingLabels(); if (msg) { ui.load.textContent = msg; ui.load.className = "load busy"; return; }
   if (miss.length) { ui.load.innerHTML = "<b>Missing instruments:</b> " + miss.map(esc).join(", ") + ". These samples didn't load (sample host blocked or offline). Playback and export stay off until they load. <button id='retry'>Retry</button>"; ui.load.className = "load bad"; $("retry").onclick = async () => { for (const s of [...missing.values()]) missing.delete(s.id); await ensureInstruments(neededInsts()); };
   } else { const n = Object.keys(bufs).length; ui.load.textContent = n ? `Real samples ready: ${n} files (FluidR3 GM pinned @${SF_SHA.slice(0, 7)} + CC0 Virtuosity kit).` : "Samples load when the page opens."; ui.load.className = "load ok"; } }
-function paintTransport(){ if (!ui.play) return; ui.play.textContent = play ? "■ Stop" : "▶ Play loop"; ui.play.classList.toggle("on", !!play);
+function paintTransport(){ if (!ui.play) return; ui.play.textContent = play ? "■ Stop" : state.loop ? "▶ Play loop (" + ((regions()[state.loopSec] || {}).name || "section") + ")" : "▶ Play song"; if (ui.loopOn) ui.loopOn.checked = state.loop; ui.play.classList.toggle("on", !!play);
   ui.rec.textContent = rec ? "● Recording takes… (Stop to finish)" : "● Record takes"; ui.rec.classList.toggle("rec", !!rec); document.body.classList.toggle("recording", !!rec); }
 function segLabel(k){ const s = state.seg; if (s === 1) return "Bar " + (k + 1); if (s === 2) return "Bars " + (2 * k + 1) + "–" + (2 * k + 2); return "Bar " + (Math.floor(k / 2) + 1) + (k % 2 ? "b" : "a"); }
 function segChord(k){ return chName(chordAt(Math.floor(k * state.seg))); }
 let lastSeg = -1;
-function paintPlayhead(step){ const k = Math.floor(step / (loopSteps() / nSeg())); if (k === lastSeg) return; lastSeg = k; document.querySelectorAll(".grid .now").forEach(e => e.classList.remove("now")); document.querySelectorAll(`.grid [data-col="${k}"]`).forEach(e => e.classList.add("now")); ui.pos.textContent = segLabel(k) + " · " + segChord(k); }
+const fmtMS = t => Math.floor(t / 60) + ":" + String(Math.floor(t % 60)).padStart(2, "0");
+let lastBar = -1;
+function paintPlayhead(step){ const bar = Math.floor(step / STEPS);
+  if (bar !== lastBar) { lastBar = bar; const r = regionAt(bar); ui.pos.textContent = `Bar ${bar + 1} / ${state.bars} · ${r ? r.name : ""} · ${chName(chordAt(bar))} · ${fmtMS(bar * 4 * 60 / state.bpm)} / ${fmtMS(loopDur())}`;
+    if (ui.tl) { ui.tl.querySelectorAll(".now").forEach(e => e.classList.remove("now")); const c = ui.tl.querySelector(`[data-bar="${bar}"]`); if (c) c.classList.add("now"); } }
+  const k = Math.floor(step / (loopSteps() / nSeg())); if (k === lastSeg) return; lastSeg = k; document.querySelectorAll(".grid .now").forEach(e => e.classList.remove("now")); document.querySelectorAll(`.grid [data-col="${k}"]`).forEach(e => e.classList.add("now")); }
+function paintTimeline(){ if (!ui.tl) return; const rs = regions(), lr = state.loop ? rs[state.loopSec] : null;
+  ui.tl.innerHTML = rs.map((r, i) => `<div class="tsec ${r === lr ? "looped" : ""}" style="flex:${r.b1 - r.b0}"><button class="tname" data-seek="${r.b0}" data-ri="${i}" title="Jump to ${esc(r.name)}">${esc(r.name)}${r.sec && r.sec.lock ? " 🔒" : ""}</button><div class="tbars">`
+    + Array.from({ length: r.b1 - r.b0 }, (_, j) => `<i data-bar="${r.b0 + j}" title="Bar ${r.b0 + j + 1} · ${esc(chName(chordAt(r.b0 + j)))}"></i>`).join("") + "</div></div>").join("");
+  ui.tl.querySelectorAll("[data-seek]").forEach(b => b.onclick = () => seekBar(+b.dataset.seek)); ui.tl.querySelectorAll("[data-bar]").forEach(b => b.onclick = () => seekBar(+b.dataset.bar));
+  lastBar = -1; paintPlayhead((cue || 0) * STEPS); }
 const cls = s => s >= 80 ? "good" : s >= 60 ? "ok" : "bad";
 function paintTakes(){ if (!ui.grid) return; const all = laneTakes(lane), okT = all.filter(compatible), bad = all.filter(t => !compatible(t)), N = nSeg(), c = comps(), sc = scoresFor(lane), cmp = c[lane], locks = state.locks[lane] || {};
   ui.laneV.classList.toggle("on", lane === "voice"); ui.laneM.classList.toggle("on", lane === "midi"); ui.laneV.textContent = `Vocal / audio takes (${takes.length})`; ui.laneM.textContent = `MIDI takes (${midiTakes().length})`;
@@ -589,9 +631,27 @@ function paintListen(){ const opts = [["comp", "B · the comp"], ["best", "A · 
   ui.abA.classList.toggle("on", state.listen === "best"); ui.abB.classList.toggle("on", state.listen === "comp");
   const m = state.listen !== "comp" && takes.length && ctx ? makeupFor(state.listen) : 1; ui.match.textContent = state.listen === "comp" ? "Hearing the comp." : `Loudness matched to the comp (${m >= 1 ? "+" : ""}${(20 * Math.log10(m)).toFixed(1)} dB on this take), so louder never wins by accident.`; }
 function setOpts(sel, list, v){ sel.innerHTML = list.map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join(""); sel.value = String(v); }
-function paintSong(){ ui.bpm.value = state.bpm; ui.key.value = state.keyRoot; ui.mode.value = state.mode; ui.chords.value = state.chords; ui.bars.value = state.bars; ui.recipe.value = state.recipe; ui.seg.value = state.seg;
-  ui.recipeNote.textContent = RECIPES[state.recipe].note + ` · preset tempo ${RECIPES[state.recipe].bpm} BPM`; ui.chordErr.textContent = parseProg(state.chords) ? `One chord per bar, repeating over ${state.bars} bars.` : "Couldn't read those chords (1–8 chords like Am F C G7 Dm/F). Using Am F C G until fixed.";
-  ui.barsNote.textContent = state.bars > FREE_BARS && !lic.valid ? `${state.bars}-bar loops play and record free; exporting them needs the unlock (8 bars export free).` : ""; }
+function paintSong(){ ui.bpm.value = state.bpm; ui.key.value = state.keyRoot; ui.mode.value = state.mode; ui.chords.value = state.chords; paintBarsSel(); ui.recipe.value = state.recipe; ui.seg.value = state.seg;
+  ui.recipeNote.textContent = RECIPES[state.recipe].note + ` · preset tempo ${RECIPES[state.recipe].bpm} BPM`; ui.chordErr.textContent = parseProg(state.chords) ? `One chord per bar. These drive every section that has no chords of its own (Chorus/Bridge start on a different chord of the same progression).` : "Couldn't read those chords (1–8 chords like Am F C G7 Dm/F). Using Am F C G until fixed.";
+  ui.barsNote.textContent = ""; paintSections(); paintTimeline(); paintTransport(); paintExportBtns(); }
+function paintBarsSel(){ const sel = ui.bars, opts = [[state.bars, `${state.bars} bars · ${fmtMS(loopDur())} (whole ${state.src === "band" ? "song" : "track"})`]]; for (const n of [4, 8, 16]) if (n !== state.bars) opts.push([n, n + " bars (one section)"]);
+  sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join(""); sel.value = String(state.bars); }
+function paintSections(){ const el = $("secList"); if (!el) return; const band = state.src === "band" || state.secSrc === "upload";
+  $("songLen").textContent = `${state.sections.length} sections · ${state.bars} bars · ${fmtMS(loopDur())} at ${state.bpm} BPM · plays start to finish` + (state.secSrc === "upload" ? " · built from your upload (review, edit or lock any section)" : "");
+  el.innerHTML = state.sections.map((x, i) => `<div class="sec ${x.lock ? "locked" : ""}" data-i="${i}"><input class="sn" data-k="name" value="${esc(x.name)}" ${x.lock ? "disabled" : ""}><label>bars <input type="number" min="1" max="128" data-k="bars" value="${x.bars}" ${x.lock ? "disabled" : ""}></label>`
+    + `<input class="sc" data-k="chords" value="${esc(x.chords)}" placeholder="${esc(secProg(x).map(chName).join(" "))}" spellcheck="false" ${x.lock ? "disabled" : ""}><label>energy <input type="range" min="0" max="1" step="0.05" data-k="energy" value="${x.energy}" ${x.lock ? "disabled" : ""}></label>`
+    + (x.conf != null ? `<span class="conf" title="detection confidence">${Math.round(x.conf * 100)}%</span>` : "") + `<label class="lk" title="Locked sections keep their name, length, chords and energy when you re-analyze"><input type="checkbox" data-lock="${i}" ${x.lock ? "checked" : ""}>🔒</label>`
+    + `<button class="mini" data-mv="-1">↑</button><button class="mini" data-mv="1">↓</button><button class="mini" data-dup>dup</button><button class="mini del" data-rm ${state.sections.length < 2 ? "disabled" : ""}>✕</button></div>`).join("");
+  const upd = (i, fn) => { const a = JSON.parse(JSON.stringify(state.sections)); fn(a, i); setSetting("sections", a); };
+  el.querySelectorAll("[data-k]").forEach(inp => inp.onchange = () => upd(+inp.closest(".sec").dataset.i, (a, i) => { const k = inp.dataset.k; a[i][k] = k === "bars" || k === "energy" ? +inp.value : inp.value; a[i].conf = null; }));
+  el.querySelectorAll("[data-lock]").forEach(c => c.onchange = () => upd(+c.dataset.lock, (a, i) => { a[i].lock = c.checked; }));
+  el.querySelectorAll("[data-mv]").forEach(b => b.onclick = () => upd(+b.closest(".sec").dataset.i, (a, i) => { const j = i + +b.dataset.mv; if (j >= 0 && j < a.length) [a[i], a[j]] = [a[j], a[i]]; }));
+  el.querySelectorAll("[data-dup]").forEach(b => b.onclick = () => upd(+b.closest(".sec").dataset.i, (a, i) => { a.splice(i + 1, 0, Object.assign({}, a[i], { lock: false })); }));
+  el.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => upd(+b.closest(".sec").dataset.i, (a, i) => { a.splice(i, 1); }));
+  $("secBox").classList.toggle("dim", !band); }
+function paintExportBtns(){ if (!ui.wav) return; const free = !lic.valid && state.bars > FREE_BARS, lab = free ? ` 🔒 full ${state.bars}-bar song needs unlock` : ` · ${state.bars} bars`;
+  ui.wav.textContent = "Export WAV" + lab; ui.mid.textContent = "Export MIDI" + lab;
+  $("expNote").textContent = free ? `Playing, recording, scoring and comping the whole song are free. Exports of up to ${FREE_BARS} bars are free; the full ${state.bars}-bar song exports after the unlock (or set the length to 8 bars for a free 8-bar export).` : `Exports are the whole ${state.bars}-bar song, exact length, downbeat at sample 0.`; }
 function paintMix(){ ui.mix.innerHTML = CHAIRS.map(c => `<div class="ch"><label>${esc(c.name)}</label><input type="range" min="0" max="1.2" step="0.01" value="${state.gains[c.id]}" data-g="${c.id}"><button class="mini ${state.mutes[c.id] ? "on" : ""}" data-m="${c.id}">${state.mutes[c.id] ? "muted" : "mute"}</button></div>`).join("")
     + `<div class="ch"><label>Vocal comp</label><input type="range" min="0" max="1.5" step="0.01" value="${state.voiceGain}" id="vg"><button class="mini ${state.voiceMute ? "on" : ""}" id="vm">${state.voiceMute ? "muted" : "mute"}</button></div>`
     + `<div class="ch"><label>Live keyboard</label><input type="range" min="0" max="1.2" step="0.01" value="${state.liveGain}" id="lg"></div><div class="ch"><label>Master</label><input type="range" min="0" max="1.2" step="0.01" value="${state.master}" id="mg"></div>`;
@@ -609,8 +669,8 @@ function paintInput(){ const g = state.gate; ui.gateOn.checked = g.on; ui.monito
   ui.hearComp.checked = state.hearCompWhileRec; ui.recKeys.checked = state.recordKeys; }
 function paintLicense(){ const b = ui.buy; if (configured() && LEMON.checkoutUrl) { b.textContent = "Unlock TakeKit · " + LEMON.price; b.disabled = false; b.onclick = () => window.open(LEMON.checkoutUrl, "_blank", "noopener"); }
   else { b.textContent = "Checkout opening soon · " + LEMON.price; b.disabled = true; }
-  ui.licState.textContent = lic.valid ? "Unlocked: 16-bar exports, stems ZIP with every raw take, unlimited takes." : `Free: loops up to ${FREE_BARS} bars, WAV + MIDI export, ${FREE_TAKES} takes per lane. Unlock adds 16-bar exports, stems (every raw take + the comp) and unlimited takes.`;
-  ui.stems.textContent = lic.valid ? "Export stems ZIP" : "Export stems ZIP 🔒"; }
+  ui.licState.textContent = lic.valid ? "Unlocked: full-song exports, stems ZIP with every raw take, unlimited takes." : `Free: play, record, score and comp the whole song; WAV + MIDI exports up to ${FREE_BARS} bars; ${FREE_TAKES} takes per lane. Unlock adds full-song exports, stems (every raw take + the comp) and unlimited takes.`;
+  ui.stems.textContent = lic.valid ? "Export stems ZIP" : "Export stems ZIP 🔒"; paintExportBtns(); }
 function paintKeys(){ const lo = state.kbdOct * 12 + 12, wk = [], bk = []; let wi = 0;
   for (let n = lo; n < lo + 25; n++) { const blk = [1, 3, 6, 8, 10].includes(pc(n)), lab = KEYMAP[n - lo] || ""; if (blk) bk.push(`<div class="bk" data-n="${n}" style="left:${wi * 34 - 11}px">${lab}</div>`); else { wk.push(`<div class="wk" data-n="${n}">${lab}<small>${pc(n) === 0 ? noteName(n) : ""}</small></div>`); wi++; } }
   ui.kbd.innerHTML = wk.join("") + bk.join(""); ui.kbd.querySelectorAll("[data-n]").forEach(k => { const n = +k.dataset.n;
@@ -620,12 +680,18 @@ function paintAll(){ paintSong(); paintMix(); paintBrain(); paintInput(); paintL
 
 // one path for every setting change (UI and test hook): validate, persist, apply live
 function setSetting(k, v){
-  if (k === "bpm") { const n = Math.round(+v); if (!(n >= 60 && n <= 180)) { paintSong(); setStatus("BPM must be 60–180."); return false; } state.bpm = n; }
+  if (k === "bpm") { const n = Math.round(+v); if (!(n >= 60 && n <= 180)) { paintSong(); setStatus("BPM must be 60–180."); return false; } state.bpm = n; if (!(arguments[2] && arguments[2].auto)) state.userSet.bpm = true; }
   else if (k === "keyRoot") { const d = ((+v - state.keyRoot) % 12 + 18) % 12 - 6; const p = parseProg(state.chords); if (p && d) state.chords = p.map(c => chName(trC(c, d))).join(" ");
-    for (const t of state.midiTakes) for (const n of t.notes) n.n = clamp(n.n + d, 0, 127); state.keyRoot = pc(+v); if (takes.length && d) setStatus(`Chords and MIDI takes moved ${d > 0 ? "up" : "down"} ${Math.abs(d)} semitone${Math.abs(d) > 1 ? "s" : ""}. Audio takes are never pitch-shifted, so they now score against the new key.`); }
+    for (const t of state.midiTakes) for (const n of t.notes) n.n = clamp(n.n + d, 0, 127); state.keyRoot = pc(+v); if (!(arguments[2] && arguments[2].auto)) state.userSet.key = true; if (takes.length && d) setStatus(`Chords and MIDI takes moved ${d > 0 ? "up" : "down"} ${Math.abs(d)} semitone${Math.abs(d) > 1 ? "s" : ""}. Audio takes are never pitch-shifted, so they now score against the new key.`); }
   else if (k === "mode") state.mode = v === "major" ? "major" : "minor";
   else if (k === "chords") { state.chords = String(v).slice(0, 80); }
-  else if (k === "bars") { const n = +v; if (![4, 8, 16].includes(n) && !(state.src === "backing" && state.bk && state.bk.whole && Number.isInteger(n) && n >= 1 && n <= 256)) return false; state.bars = n; state.locks = { voice: {}, midi: {} }; }
+  else if (k === "bars") { const n = +v; if (n === state.bars) { /* no change */ }
+    else if (state.src === "band") { if (!(Number.isInteger(n) && n >= 1 && n <= 128)) return false; state.sections = [{ name: n <= 16 ? "Loop" : "Song", bars: n, chords: "", rot: 0, energy: 1, lock: false }]; state.secSrc = "user"; state.loopSec = 0; normSections(); state.locks = { voice: {}, midi: {} }; }
+    else { if ([4, 8, 16].includes(n) && state.bk) state.bk.whole = false; else if (!(state.bk && state.bk.whole && Number.isInteger(n) && n >= 1 && n <= 1024)) return false; state.bars = n; state.locks = { voice: {}, midi: {} }; } }
+  else if (k === "sections") { if (!Array.isArray(v) || !v.length || v.length > 48) return false; const old = state.bars; state.sections = v; normSections(); if (state.src !== "band" && state.secSrc !== "upload") state.secSrc = "upload"; if (state.bars !== old) state.locks = { voice: {}, midi: {} }; state.loopSec = clamp(state.loopSec, 0, regions().length - 1); }
+  else if (k === "fullSong") { state.sections = defaultSections(); state.secSrc = "user"; normSections(); state.locks = { voice: {}, midi: {} }; }
+  else if (k === "loop") { state.loop = !!v; if (state.loop) { const at = play ? Math.floor(play.step / STEPS) : (cue || 0); state.loopSec = Math.max(0, regions().indexOf(regionAt(at))); } }
+  else if (k === "loopSec") { const n = Math.round(+v); if (!(n >= 0 && n < regions().length)) return false; state.loopSec = n; }
   else if (k === "recipe") { if (!RECIPES[v]) return false; state.recipe = v; }
   else if (k === "seg") { const n = +v; if (![0.5, 1, 2].includes(n)) return false; state.seg = n; state.locks = { voice: {}, midi: {} }; }
   else if (k === "listen") state.listen = v;
@@ -637,7 +703,9 @@ function setSetting(k, v){
 function cantPlay(){ setStatus("Can't play yet: " + missingLabels(filesFor(neededInsts())).join(", ") + " didn't load. Press Retry in the samples line."); }
 async function tapStart(){ await ensureCtx(); ui.tap.classList.add("hide"); const ok = await ensureInstruments(neededInsts()); enableMic(); listDevices(); if (!ok) { cantPlay(); return; } setStatus("Audio on. Press ▶ Play loop to hear your band, then ● Record takes and sing a few passes."); }
 function bind(){ for (const id of ["status", "load", "play", "rec", "pos", "grid", "why", "listen", "abA", "abB", "match", "bpm", "key", "mode", "chords", "bars", "recipe", "seg", "recipeNote", "chordErr", "barsNote", "mix", "sw", "xf", "seam",
-    "gateOn", "monitor", "trim", "lat", "hearComp", "recKeys", "buy", "licState", "licKey", "licBtn", "stems", "wav", "mid", "kbd", "audioIn", "audioOut", "audioOutNote", "midiIn", "midiOut", "midiNote", "liveInst", "micBtn", "micState", "tap", "laneV", "laneM", "imp", "impFile", "clearTakes", "presetBpm", "ios"]) ui[id] = $(id);
+    "gateOn", "monitor", "trim", "lat", "hearComp", "recKeys", "buy", "licState", "licKey", "licBtn", "stems", "wav", "mid", "kbd", "audioIn", "audioOut", "audioOutNote", "midiIn", "midiOut", "midiNote", "liveInst", "micBtn", "micState", "tap", "laneV", "laneM", "imp", "impFile", "clearTakes", "presetBpm", "ios", "tl", "loopOn"]) ui[id] = $(id);
+  ui.loopOn.onchange = () => setSetting("loop", ui.loopOn.checked); $("secAdd").onclick = () => setSetting("sections", JSON.parse(JSON.stringify(state.sections)).concat([{ name: "Section " + (state.sections.length + 1), bars: 8, chords: "", rot: 0, energy: 0.8 }]));
+  $("secReset").onclick = () => { if (confirm("Replace the song structure with the default full song (Intro, Verse, Chorus, Verse, Chorus, Bridge, Chorus, Outro = 64 bars)?")) setSetting("fullSong", true); };
   setOpts(ui.key, NAMES.map((n, i) => [i, n]), state.keyRoot); setOpts(ui.recipe, Object.entries(RECIPES).map(([k, r]) => [k, r.name]), state.recipe); setOpts(ui.liveInst, LIVE_INSTS.map(k => [k, INST[k].label]), state.liveInst);
   ui.tap.onclick = tapStart;
   ui.play.onclick = async () => { await ensureCtx(); ui.tap.classList.add("hide"); if (play) { stop(); return; } if (await ensureInstruments(neededInsts())) start(); else cantPlay(); };
@@ -666,7 +734,7 @@ function bind(){ for (const id of ["status", "load", "play", "rec", "pos", "grid
   addEventListener("keyup", e => { const n = kn(e); if (n == null) return; held.delete(n); liveOff(n, "screen"); });
   ui.imp.onclick = () => ui.impFile.click(); ui.impFile.onchange = async () => { if (ui.impFile.files.length) await importFiles([...ui.impFile.files]); ui.impFile.value = ""; };
   ui.clearTakes.onclick = async () => { if (!confirm("Delete every take? This can't be undone.")) return; takes = []; state.midiTakes = []; state.locks = { voice: {}, midi: {} }; state.excluded = {}; state.takeNames = {}; state.listen = "comp"; await idb.clear(); save(); paintTakes(); setStatus("All takes cleared."); };
-  const gateBars = () => { if (state.bars > FREE_BARS && !lic.valid) { setStatus(`Exporting ${state.bars}-bar loops needs the unlock. Set Bars to 4 or 8 for a free export.`); return false; } return true; };
+  const gateBars = () => { if (state.bars > FREE_BARS && !lic.valid) { setStatus(`Exporting the full ${state.bars}-bar song needs the unlock (exports up to ${FREE_BARS} bars are free; set the length to 8 bars for a free export). Playing and recording the whole song stay free.`); return false; } return true; };
   ui.wav.onclick = async () => { if (!gateBars()) return; try { setStatus("Rendering WAV…"); const w = await exportWavBytes(); download(w.bytes, w.name, "audio/wav"); setStatus(`Saved ${w.name}: ${w.frames.toLocaleString()} samples at 48 kHz / 24-bit, peak −1 dBFS, exactly ${state.bars} bars.`); } catch (e) { setStatus(String(e.message || e)); } };
   ui.mid.onclick = () => { if (!gateBars()) return; const m = exportMidBytes(); download(m.bytes, m.name, "audio/midi"); setStatus(`Saved ${m.name}: band, your MIDI comp, every MIDI take as its own track, and a marker on each segment naming the take used.`); };
   ui.stems.onclick = async () => { if (!lic.valid) { setStatus("Stems (every raw take + the comp + each band part) are part of the unlock."); return; } try { setStatus("Rendering stems…"); const z = await exportStemsBytes(); download(z.zip, z.name, "application/zip"); setStatus(`Saved ${z.name}: ${z.files.length} files.`); } catch (e) { setStatus(String(e.message || e)); } };
@@ -684,5 +752,5 @@ async function boot(){ bind(); paintAll();
 window.__takekit = { state, setSetting, ensureCtx, start, stop, startRec, exportWavBytes, exportMidBytes, exportStemsBytes, importFiles, comps, scoresFor, renderVoice, voiceBuffer, makeupFor,
   takes: () => takes, midiTakes, ready: () => loading.size === 0 && Object.keys(bufs).length > 0 && missingLabels(filesFor(neededInsts())).length === 0, play: () => play, active: () => active.size, liveVoices: () => liveVoices.size, sustainOn: () => sustain, INST, KIT, SAMPLES, bufs: () => Object.keys(bufs).length, latencyS, segLabel, ctx: () => ctx, measureStopSilence, missingLabels, neededInsts, filesFor, liveOn, liveOff, setSustain, onMidi, lic, LEMON, choiceFor, playing: () => !!play, recording: () => !!rec,
   async importBytes(b64, name){ const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < u.length; i++) u[i] = bin.charCodeAt(i); return importFiles([new File([u], name || "take.wav", { type: "audio/wav" })]); },
-  lock(l, k, id){ state.locks[l][k] = id; save(); paintTakes(); }, paintTakes, enableMic };
-boot();
+  seekBar, regions, playRange, chordAt, energyAt, normSections, defaultSections, barLog: () => window.__barLog, cue: () => cue, lock(l, k, id){ state.locks[l][k] = id; save(); paintTakes(); }, paintTakes, enableMic };
+normSections(); boot();

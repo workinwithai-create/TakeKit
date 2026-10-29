@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "TakeKit: sing pass after pass over your loop, get the best comp. WorkinWithAI.",
-  "scripts": { "build": "rm -rf dist && mkdir -p dist && cp index.html app.js pro.js styles.css dist/ && cp -r public/samples dist/samples" },
+  "scripts": { "build": "rm -rf dist && mkdir -p dist && cp index.html app.js pro.js analyze.js styles.css dist/ && cp -r public/samples dist/samples" },
   "license": "UNLICENSED"
 }

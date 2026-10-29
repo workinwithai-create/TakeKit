@@ -33,7 +33,7 @@ async def main():
     ctx=await br.new_context(viewport={'width':1360,'height':1000},accept_downloads=True); await ctx.add_init_script(MOCK); pg=await ctx.new_page(); errs=[]; reqs=[]
     pg.on('pageerror',lambda e:errs.append(str(e))); pg.on('console',lambda m: m.type=='error' and errs.append(m.text)); pg.on('request',lambda r: reqs.append(r.url))
     await pg.goto(URL); await pg.evaluate("()=>{localStorage.clear(); indexedDB.deleteDatabase('takekit')}"); await pg.reload(); await pg.screenshot(path=OD+'/shot-tap.png')
-    await boot(pg)
+    await boot(pg); await setv(pg,'bars',8)  # full-song default is 64 bars; these checks use the 8-bar song
     res['live_ctx']=await pg.evaluate(f"()=>({{sampleRate:{F}.ctx().sampleRate,state:{F}.ctx().state,load:document.getElementById('load').textContent,mic:document.getElementById('micState').textContent}})")
     # ---- import the demo takes (4 passes of a sampled voice with known flaws) and check the auto comp
     b64=base64.b64encode(open(QD+'/demo-takes-92bpm-Am.wav','rb').read()).decode()
@@ -74,6 +74,7 @@ async def main():
     res['c6']={'recipe':'ballad','bpm':68,'note_s':round(4*60/68,3),'instrument':'String ensemble (FluidR3), looped sustain','rms_30-50%':round(mid,4),'rms_92-99%':round(end,4),'end/mid':round(end/mid,3)}
     res['c6']['pass']=end/mid>0.8; await setv(pg,'recipe','pop'); await setv(pg,'bpm',92)
     # ---- c4 live changes while playing: heard within one bar, no restart; MIDI out mirrors the band
+    await setv(pg,'loop',True)  # keep the 8-bar song cycling for the whole c4 run
     await pg.evaluate("()=>{const s=document.getElementById('midiOut'); s.value='out1'; s.dispatchEvent(new Event('change'))}")
     await pg.click('#play'); await pg.wait_for_timeout(3000); live={}
     p1=await pg.evaluate(f"()=>{F}.takes().find(t=>t.name==='demo p1').id"); seg0_before=cp['comp'][0]
@@ -98,6 +99,7 @@ async def main():
     await pg.click('[data-m=drums]'); await setv(pg,'recipe','pop'); await setv(pg,'keyRoot',9); await setv(pg,'bpm',92); await pg.evaluate(f"()=>{{delete {F}.state.locks.voice[0];}}"); await setv(pg,"listen","comp")
     # ---- c3 hidden tab 30 s while recording
     n_takes0=await pg.evaluate(f"()=>{F}.takes().length+{F}.midiTakes().length")
+    await setv(pg,'loop',True)  # c3 records pass after pass: opt-in section loop
     await pg.click('#rec'); await pg.wait_for_timeout(1500)
     oth=await ctx.new_page(); await oth.goto('about:blank'); await oth.bring_to_front()
     n0=await pg.evaluate("()=>{Object.defineProperty(document,'visibilityState',{value:'hidden',configurable:true});document.dispatchEvent(new Event('visibilitychange'));return window.__schedLog.length}")

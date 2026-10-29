@@ -4,7 +4,7 @@
 (() => {
 const P = {}; window.__bkLog = [];
 const IR_URL = "samples/ir/konsa-hall-1.wav"; // CC0 recorded balloon-pop IR, Helsinki Conservatory hall (lehtoroni/kajahdus @9dae394), bundled
-const DEF_BK = { offsetMs: 0, startBar: 0, whole: false, vol: 0.9, mute: false, inExport: true, name: "" };
+const DEF_BK = { offsetMs: 0, startBar: 0, whole: true, vol: 0.9, mute: false, inExport: true, name: "" };
 const DEF_GD = { vol: 0.8, mute: false, solo: false, recOnly: true, stem: false, score: true, follow: true, offsetMs: 0, name: "", kind: "" };
 const DEF_LY = { text: "", times: {}, words: {}, locks: {}, follow: true };
 const PRESETS = {
@@ -19,7 +19,7 @@ function preset(name){ if (name === "Off") return Object.assign(preset("Clean Po
     hpf: { on: true, mix: 1, f: p.hpf[0] }, sub: { on: true, mix: 1, f: p.sub[0], g: p.sub[1], q: p.sub[2] }, deess: { on: true, mix: 1, f: p.deess[0], th: p.deess[1] },
     comp: { on: true, mix: 1, fth: p.comp[0], fr: p.comp[1], lth: p.comp[2], lr: p.comp[3] }, tone: { on: true, mix: 1, pres: p.tone[0], presF: p.tone[1], air: p.tone[2] },
     sat: { on: true, mix: p.sat[1], drive: p.sat[0] }, verb: { on: true, mix: 1, send: p.verb[0] }, delay: { on: true, mix: 1, send: p.delay[0], div: p.delay[1], fb: p.delay[2] } }; }
-state.src = state.src === "backing" ? "backing" : "band";
+state.src = ["backing", "both"].includes(state.src) ? state.src : "band"; normSections();
 state.bk = Object.assign({}, DEF_BK, state.bk || {}); state.guide = Object.assign({}, DEF_GD, state.guide || {}); state.lyr = Object.assign({}, DEF_LY, state.lyr || {});
 { const base = preset(state.chain && state.chain.preset || "Clean Pop"), c = state.chain || {}; for (const k of STAGES) base[k] = Object.assign(base[k], c[k] || {});
   for (const k of ["on", "trim", "export", "monitorFx", "preset"]) if (c[k] !== undefined) base[k] = c[k]; state.chain = base; }
@@ -33,7 +33,7 @@ const FMT = "This browser can't decode that file. Chrome, Edge and Firefox read 
 
 // ---------- backing track ----------
 let bkRaw = null, bk48 = null, bkMono = null;
-P.isBk = () => state.src === "backing" && !!bk48;
+P.isBk = () => state.src !== "band" && !!bk48;
 P.bkInMix = () => P.isBk() && state.bk.inExport;
 const bkOff = bar => state.bk.offsetMs / 1000 + (state.bk.startBar + bar) * barDur();
 async function setBacking(name, bytes, persist){ let b; try { b = await decodeCtx().decodeAudioData(bytes.slice(0)); } catch (e) { return { ok: false, msg: `Couldn't read ${name}. ${FMT}` }; }
@@ -42,12 +42,12 @@ async function setBacking(name, bytes, persist){ let b; try { b = await decodeCt
   return { ok: true }; }
 P.loadBacking = async file => { const r = await setBacking(file.name, await file.arrayBuffer(), true); if (!r.ok) { $("bkErr").textContent = r.msg; paint(); return false; }
   $("bkErr").textContent = ""; const sug = detectBpm(); state.bk.bpmHint = sug; if (state.bk.whole) fitWhole(); save(); paintSong(); paintTakes(); paint(); setStatus(`Loaded ${file.name} as your backing (${bk48.duration.toFixed(1)} s, decoded locally). Set BPM + key, then the first downbeat.`); return true; };
-P.clearBacking = async () => { await fdb.del("backing"); bkRaw = bk48 = bkMono = null; state.src = "band"; state.bk = Object.assign({}, DEF_BK); if (![4, 8, 16].includes(state.bars)) state.bars = 8; save(); paintSong(); paintTakes(); paint(); setStatus("Backing track cleared. The built-in band is back."); };
+P.clearBacking = async () => { await fdb.del("backing"); bkRaw = bk48 = bkMono = null; state.src = "band"; state.secSrc = "user"; state.bk = Object.assign({}, DEF_BK); normSections(); save(); paintSong(); paintTakes(); paint(); setStatus("Backing track cleared. The built-in band is back."); };
 function detectBpm(){ if (!bkMono) return null; const sr = 48000, H = 512, n = Math.min(bkMono.length, sr * 60), env = []; let prev = 1e-9;
   for (let i = 0; i + H <= n; i += H) { let e = 1e-9; for (let j = i; j < i + H; j++) e += bkMono[j] * bkMono[j]; env.push(Math.max(0, Math.log(e) - Math.log(prev))); prev = e; }
   let best = null, bv = -1; for (let bpm = 60; bpm <= 180; bpm += 0.5) { const lag = 60 / bpm * sr / H, L = Math.floor(lag); let s = 0, c = 0; for (let i = 0; i + L + 1 < env.length; i++) { const f = lag - L, v = env[i + L] * (1 - f) + env[i + L + 1] * f; s += env[i] * v; c++; } s /= Math.max(1, c); if (s > bv * 1.0001) { bv = s; best = bpm; } }
   if (!best) return null; while (best < 70) best *= 2; while (best > 160) best /= 2; return Math.round(best); }
-function fitWhole(){ if (!bk48) return; const n = Math.max(1, Math.min(256, Math.floor((bk48.duration - state.bk.offsetMs / 1000 + 0.005) / barDur())));
+function fitWhole(){ if (!bk48 || state.src === "band") return; const n = Math.max(1, Math.min(1024, Math.floor((bk48.duration - state.bk.offsetMs / 1000 + 0.005) / barDur())));
   state.bk.startBar = 0; state.bars = n; state.locks = { voice: {}, midi: {} }; }
 function snapOnset(t){ if (!bkMono) return t; const sr = 48000, w = 48, i0 = Math.max(0, Math.round((t - 0.04) * sr)), i1 = Math.min(bkMono.length, Math.round((t + 0.04) * sr)), env = [];
   for (let i = i0; i + w <= i1; i += w) { let m = 0; for (let j = i; j < i + w; j++) m = Math.max(m, Math.abs(bkMono[j])); env.push(m); }
@@ -213,21 +213,20 @@ function paintLyrics(){ const box = $("lyrList"); if (!box) return; const L = li
   box.querySelectorAll("[data-drag]").forEach(r => { r.oninput = () => { mv(+r.dataset.drag, +r.value); r.parentElement.querySelector(".lt").textContent = fmtT(+r.value); }; });
   box.querySelectorAll("[data-lock]").forEach(c => c.onchange = () => { if (c.checked) state.lyr.locks[c.dataset.lock] = true; else delete state.lyr.locks[c.dataset.lock]; saveMix(); });
   $("lyrNote").textContent = gd ? `Auto-time follows the guide vocal (${state.guide.name}). Times are from bar 1 of the loop, which is sample 0 of every export.` : "Add a guide vocal to auto-time from the singing; without one, lines are spread evenly across the loop."; }
-function paint(){ const b = state.bk, has = !!bk48; $("src").value = state.src; $("bkBox").classList.toggle("dim", state.src !== "backing");
+function paint(){ const b = state.bk, has = !!bk48; $("src").value = state.src; $("bkBox").classList.toggle("dim", state.src === "band");
   $("bkName").textContent = has ? `${b.name} · ${bk48.duration.toFixed(1)} s · stored in this browser` : (b.name && state.src === "backing" ? "Backing file missing: upload it again." : "No backing loaded.");
   $("bkOff").value = b.offsetMs; $("bkOffR").max = has ? Math.min(30000, Math.floor(bk48.duration * 1000)) : 30000; $("bkOffR").value = b.offsetMs; $("bkStart").value = b.startBar + 1; $("bkWhole").checked = b.whole; $("bkVol").value = b.vol; $("bkMute").textContent = b.mute ? "muted" : "mute"; $("bkMute").classList.toggle("on", b.mute); $("bkInc").checked = b.inExport;
   $("bkBpm").innerHTML = has && b.bpmHint ? `Detected tempo suggestion: <b>${b.bpmHint} BPM</b> <button class="mini" id="bkUseBpm">use it</button> (your BPM ${state.bpm} stays until you choose)` : "";
   if ($("bkUseBpm")) $("bkUseBpm").onclick = () => { setSetting("bpm", b.bpmHint); paint(); };
-  const sel = $("bars"); if (![...sel.options].some(o => +o.value === state.bars)) { const o = document.createElement("option"); o.value = state.bars; o.textContent = state.bars + " (whole track)"; sel.appendChild(o); } sel.value = state.bars;
-  $("bkGrid").textContent = has ? `Bar 1 starts ${(bkOff(0)).toFixed(3)} s into the file; loop = ${state.bars} bars (${(state.bars * barDur()).toFixed(3)} s) at ${state.bpm} BPM.` : "";
+  $("bkGrid").textContent = has ? `Bar 1 starts ${(bkOff(0)).toFixed(3)} s into the file; ${state.bk.whole ? "whole track" : "loop"} = ${state.bars} bars (${(state.bars * barDur()).toFixed(3)} s) at ${state.bpm} BPM.` : "";
   const g = state.guide; $("gdName").textContent = gd ? `${g.name} (${g.kind === "file" ? "uploaded file" : "from a take"}) · stored in this browser` : "No guide vocal.";
   $("gdVol").value = g.vol; for (const [id, k] of [["gdMute", "mute"], ["gdSolo", "solo"]]) { $(id).classList.toggle("on", g[k]); } $("gdRec").checked = g.recOnly; $("gdScore").checked = g.score; $("gdStem").checked = g.stem; $("gdFollow").checked = g.follow; $("gdOff").value = g.offsetMs; $("gdOff").disabled = g.follow;
   $("gdPick").innerHTML = `<option value="">Use a take as the guide…</option>` + (takes.length ? `<option value="comp">Comp (B)</option>` : "") + takes.map(t => `<option value="${esc(t.id)}">${esc(takeName(t))}</option>`).join("");
   if (document.activeElement !== $("lyrText")) $("lyrText").value = state.lyr.text; $("lyrFollow").checked = state.lyr.follow; paintChain(); paintLyrics(); }
 P.paint = paint;
-P.onSetting = k => { if (k === "bpm") { if (state.bk.whole) { fitWhole(); save(); } P.apply(); } paint(); };
+P.onSetting = k => { if (k === "bpm") { if (state.bk.whole && P.isBk()) { fitWhole(); save(); } P.apply(); } paint(); };
 function bindPro(){ const on = (id, ev, fn) => { $(id)[ev] = fn; };
-  on("src", "onchange", () => { state.src = $("src").value; if (state.src === "band" && ![4, 8, 16].includes(state.bars)) state.bars = 8; if (state.src === "backing" && !bk48) $("bkErr").textContent = "Upload a backing file to hear it (the band is silent in this mode)."; save(); paintSong(); paintTakes(); paint(); ensureInstruments(neededInsts()); });
+  on("src", "onchange", () => { state.src = $("src").value; if (state.src === "band") normSections(); else if (state.bk.whole && bk48) fitWhole(); if (state.src !== "band" && !bk48) $("bkErr").textContent = "Upload a backing file to hear it (the band is silent in this mode)."; save(); paintSong(); paintTakes(); paint(); ensureInstruments(neededInsts()); });
   on("bkUp", "onclick", () => $("bkFile").click()); on("bkFile", "onchange", async () => { const f = $("bkFile").files[0]; if (f) await P.loadBacking(f); $("bkFile").value = ""; });
   on("bkClear", "onclick", P.clearBacking); on("bkTap", "onclick", P.tapDownbeat);
   on("bkOff", "onchange", () => setBk("offsetMs", +$("bkOff").value)); on("bkOffR", "oninput", () => setBk("offsetMs", +$("bkOffR").value));
@@ -251,7 +250,7 @@ function bindPro(){ const on = (id, ev, fn) => { $(id)[ev] = fn; };
   addEventListener("keydown", e => { if (e.key !== "Enter" || e.target.matches("input,textarea,select,button")) return; if (tapPrev) { e.preventDefault(); P.tapDownbeat(); } else if ($("lyrTap").classList.contains("on")) { e.preventDefault(); P.tap(); } }); }
 async function bootPro(){ bindPro(); const b = await fdb.get("backing"); if (b && b.bytes) { const r = await setBacking(b.name, b.bytes, false); if (!r.ok) $("bkErr").textContent = r.msg; }
   const g = await fdb.get("guide"); if (g) { if (g.kind === "file") await setGuideFile(g.name, g.bytes); else { gd = { kind: "loop", sr: g.sr, data: g.data }; gdId++; } }
-  ver++; paint(); paintTakes(); loadIR(); }
-Object.assign(P, { state: () => state, PRESETS: Object.keys(PRESETS), guideLoop, guideAn, detectBpm: () => detectBpm(), bkOff, lines, isTimed, fmtT, ready: null });
+  if (bk48 && state.src !== "band" && state.bk.whole) fitWhole(); normSections(); ver++; save(); paintSong(); paint(); paintTakes(); loadIR(); }
+Object.assign(P, { bkMono: () => bkMono, bkDur: () => bk48 ? bk48.duration : 0, fitWhole, state: () => state, PRESETS: Object.keys(PRESETS), guideLoop, guideAn, detectBpm: () => detectBpm(), bkOff, lines, isTimed, fmtT, ready: null });
 P.ready = bootPro(); window.__pro = P;
 })();
