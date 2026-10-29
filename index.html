@@ -137,7 +137,9 @@
 <section class="card mixer"><h2>5 · Mix</h2><div id="mix" class="mix"></div><p class="hint">Every chair → master → safety limiter. Exports skip the limiter and are peak-normalised to −1 dBFS.</p></section>
 
 <section class="card export"><h2>6 · Export</h2>
+  <div class="row"><label>What to export <select id="expScope"><option value="song">Whole song</option></select></label><span id="expRange" hidden>bars <input id="expFrom" type="number" min="1" value="1" style="width:4.5em"> to <input id="expTo" type="number" min="1" value="8" style="width:4.5em"></span></div>
   <div class="row"><button id="wav">Export WAV</button><button id="mid">Export MIDI</button><button id="stems">Export stems ZIP</button><span id="expNote" class="hint"></span>
+    <progress id="expProg" max="1" value="0" hidden></progress><div id="expMsg" class="expmsg" role="status" aria-live="polite"></div><div id="saveRow" class="row" hidden></div>
     <label><input id="bkInc" type="checkbox"> Include backing in the mix</label><label>Vocal <select id="chExport"><option value="chain">with chain</option><option value="dry">dry</option></select></label></div>
   <p class="hint">48 kHz / 24-bit stereo at exactly your bar length with the downbeat on sample 0. It drops onto your DAW grid and loops without clicks. The MIDI has tempo, 4/4, a track per chair, every MIDI take, and markers naming the take used in each segment. Files are named <code>takekit-&lt;band&gt;-&lt;bpm&gt;bpm-&lt;key&gt;</code>.</p>
   <div class="lic"><button id="buy" disabled>Checkout opening soon</button> <input id="licKey" placeholder="License key"> <button id="licBtn" class="mini">Activate</button> <span id="licState" class="hint"></span></div>

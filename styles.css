@@ -53,3 +53,4 @@ textarea{width:100%;font:inherit;color:var(--ink);background:#0c0e12;border:1px 
 .tname{font-size:11px;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#1b2130;border:0;color:#d6dbe4;cursor:pointer;text-align:left}
 .tbars{display:flex;flex:1}.tbars i{flex:1;min-height:16px;border-left:1px solid #222a38;cursor:pointer}.tbars i:hover{background:#334}.tbars i.now{background:var(--acc)}
 .loopt{font-size:13px}.an-t td,.an-t th{padding:2px 6px;font-size:12px;text-align:left}
+.expmsg{width:100%;font-size:13px;min-height:1em}.expmsg.ok{color:#9fe0a8}.expmsg.warn{color:#ffd58a}.expmsg.bad{color:#ffb0aa;background:#3a1714;padding:8px;border-radius:8px}.expmsg.busy{color:var(--acc)}#expProg{width:100%}

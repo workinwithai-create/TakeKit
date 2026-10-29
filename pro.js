@@ -112,6 +112,13 @@ async function loadIR(){ if (irRaw || irErr) return; try { const r = await fetch
 const makeup = (th, r) => Math.pow(10, 0.6 * th * (1 - 1 / r) / 20); // cancels the compressor's automatic makeup gain (spec: (1/fullRangeGain)^0.6)
 function satCurve(drive){ const n = 2049, c = new Float32Array(n), k = Math.tanh(drive); for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; c[i] = Math.tanh(drive * x) / k; } return c; }
 const topoKey = (p, fx) => p.on ? STAGES.map(k => p[k].on ? 1 : 0).join("") + (fx ? "f" : "") + (irLive ? "i" : "") : "off";
+// Safari/WebKit throws NotSupportedError when a ConvolverNode buffer's sample rate differs from its context (Chrome resamples
+// silently). The IR is decoded at 48 kHz, but an iPhone's live context often runs at 44.1/24/16 kHz (AirPods, BT), so resample once per rate.
+const irCache = {};
+function irFor(c){ if (!irLive) return null; const k = c.sampleRate; if (irLive.sampleRate === k) return irLive; if (irCache[k]) return irCache[k];
+  const r = irLive.sampleRate / k, n = Math.max(1, Math.round(irLive.length / r)), b = c.createBuffer(irLive.numberOfChannels, n, k);
+  for (let ch = 0; ch < irLive.numberOfChannels; ch++) { const s = irLive.getChannelData(ch), d = b.getChannelData(ch); for (let i = 0; i < n; i++) { const x = i * r, j = Math.floor(x), f = x - j; d[i] = (s[j] || 0) * (1 - f) + (s[j + 1] || 0) * f; } }
+  return (irCache[k] = b); }
 function makeChain(c, input, output, fx, ir){ const p = state.chain, n = { topo: topoKey(p, fx), c, fx }, T = c.createGain(); n.trim = T;
   if (!p.on) { input.connect(output); n.direct = true; return n; }
   let cur = input; const stage = (name, build) => { const s = p[name]; if (!s.on) return; const out = c.createGain(), [a, z, ex] = build(), w = c.createGain(), d = c.createGain(); cur.connect(a); z.connect(w); w.connect(out); cur.connect(d); d.connect(out); n[name] = Object.assign({ w, d }, ex); cur = out; };
@@ -125,7 +132,7 @@ function makeChain(c, input, output, fx, ir){ const p = state.chain, n = { topo:
   stage("tone", () => { const pr = c.createBiquadFilter(), air = c.createBiquadFilter(); pr.type = "peaking"; pr.Q.value = 0.9; air.type = "highshelf"; air.frequency.value = 10000; pr.connect(air); return [pr, air, { pr, air }]; });
   stage("sat", () => { const ws = c.createWaveShaper(); ws.oversample = "2x"; return [ws, ws, { ws }]; });
   cur.connect(T);
-  if (fx && p.verb.on && (ir || irLive)) { const s = c.createGain(), cv = c.createConvolver(), w = c.createGain(); cv.buffer = ir || irLive; cur.connect(s); s.connect(cv); cv.connect(w); w.connect(T); n.verb = { s, cv, w }; }
+  const irb = ir || irFor(c); if (fx && p.verb.on && irb) { const s = c.createGain(), cv = c.createConvolver(), w = c.createGain(); cv.buffer = irb; cur.connect(s); s.connect(cv); cv.connect(w); w.connect(T); n.verb = { s, cv, w }; }
   if (fx && p.delay.on) { const s = c.createGain(), dl = c.createDelay(2), fb = c.createGain(), lp = c.createBiquadFilter(), w = c.createGain(); lp.type = "lowpass"; lp.frequency.value = 5000;
     cur.connect(s); s.connect(dl); dl.connect(lp); lp.connect(fb); fb.connect(dl); lp.connect(w); w.connect(T); n.delay = { s, dl, fb, w }; }
   T.connect(output); setParams(n, p, 0); return n; }
@@ -144,11 +151,11 @@ function teardown(n, input){ try { input.disconnect(); } catch (e) {} for (const
 function syncChain(c, n, input, output, fx){ if (n && n.topo === topoKey(state.chain, fx)) { setParams(n, state.chain, c.currentTime); return n; } if (n) teardown(n, input); return makeChain(c, input, output, fx); }
 P.voiceDest = async (oc, sum, o) => { const dry = o.dry != null ? o.dry : state.chain.export === "dry"; if (dry || !state.chain.on) return sum;
   const ir = irRaw ? await oc.decodeAudioData(irRaw.slice(0)) : null, input = oc.createGain(); makeChain(oc, input, sum, true, ir); return input; };
-P.offlineExtras = async (oc, sum, only, N) => {
-  if (only.includes("backing") && P.isBk()) { const b = await oc.decodeAudioData(bkRaw.slice(0)), s = oc.createBufferSource(), g = oc.createGain(), off = bkOff(0), when = off < 0 ? -off : 0, dur = N / SR - when, e = 64 / SR;
-    s.buffer = b; s.connect(g); g.connect(sum); g.gain.setValueAtTime(state.bk.vol, 0); g.gain.setValueAtTime(state.bk.vol, N / SR - e); g.gain.linearRampToValueAtTime(0, N / SR); // backing is cut to the exact grid length; no tail fold (it's a recording, not a ring-out)
-    if (dur > 0) s.start(when, Math.max(0, off), dur); }
-  if (only.includes("guide") && gd) { const d = guideLoop(SR), b = oc.createBuffer(1, d.length, SR), s = oc.createBufferSource(), g = oc.createGain(); b.copyToChannel(d, 0); s.buffer = b; g.gain.value = state.guide.vol; s.connect(g); g.connect(sum); s.start(0); } };
+P.offlineExtras = async (oc, sum, only, N, t0, cache, fade) => { t0 = t0 || 0; cache = cache || {}; fade = fade !== false;
+  if (only.includes("backing") && P.isBk()) { const b = cache.bk || (cache.bk = await oc.decodeAudioData(bkRaw.slice(0))), s = oc.createBufferSource(), g = oc.createGain(), off = bkOff(0) + t0, when = off < 0 ? Math.min(N / SR, -off) : 0, dur = N / SR - when, e = 64 / SR;
+    s.buffer = b; s.connect(g); g.connect(sum); g.gain.setValueAtTime(state.bk.vol, 0); if (fade) { g.gain.setValueAtTime(state.bk.vol, N / SR - e); g.gain.linearRampToValueAtTime(0, N / SR); } // backing is cut to the exact grid length; no tail fold (it's a recording, not a ring-out). Chunked renders only fade the real end.
+    if (dur > 0 && Math.max(0, off) < b.duration) s.start(when, Math.max(0, off), dur); }
+  if (only.includes("guide") && gd) { const d = guideLoop(SR); if (d && t0 * SR < d.length) { const b = oc.createBuffer(1, d.length, SR), s = oc.createBufferSource(), g = oc.createGain(); b.copyToChannel(d, 0); s.buffer = b; g.gain.value = state.guide.vol; s.connect(g); g.connect(sum); s.start(0, t0, N / SR); } } };
 P.loadPreset = name => { state.chain = Object.assign(preset(name), { export: state.chain.export, monitorFx: state.chain.monitorFx }); if (name === "Off") state.chain.on = false; saveMix(); P.apply(); paintChain(); };
 
 // ---------- lyrics: text kept byte-for-byte; times are seconds from the loop start (= sample 0 of the export) ----------
@@ -246,7 +253,7 @@ function bindPro(){ const on = (id, ev, fn) => { $(id)[ev] = fn; };
   on("lyrAuto", "onclick", () => { const n = P.autoTime(); setStatus(n ? `Timed ${n} lines${gd ? " to the guide vocal" : ""}. Locked lines were left alone.` : "Paste some lyrics first."); });
   on("lyrTap", "onclick", () => { tapIdx = -1; const a = !$("lyrTap").classList.contains("on"); $("lyrTap").classList.toggle("on", a); $("lyrTapBtn").hidden = !a; setStatus(a ? "Tap mode: press Play, then hit TAP (or Enter) as each line starts." : "Tap mode off."); });
   on("lyrTapBtn", "onclick", P.tap); on("lyrFollow", "onchange", () => { state.lyr.follow = $("lyrFollow").checked; saveMix(); });
-  on("lyrLrc", "onclick", () => { download(new TextEncoder().encode(P.lrc()), fileBase() + ".lrc", "text/plain"); setStatus("Saved " + fileBase() + ".lrc (times from bar 1 = sample 0 of the WAV)."); });
+  on("lyrLrc", "onclick", async () => { try { const r = await saveFile(new TextEncoder().encode(P.lrc()), fileBase() + ".lrc", "text/plain"); if (r !== "needs-tap" && r !== "cancelled" && r !== "blocked") expMsg("Saved " + fileBase() + ".lrc (times from bar 1 = sample 0 of the WAV).", "ok"); } catch (e) { expMsg("LRC export failed: " + (e.message || e), "bad"); } });
   addEventListener("keydown", e => { if (e.key !== "Enter" || e.target.matches("input,textarea,select,button")) return; if (tapPrev) { e.preventDefault(); P.tapDownbeat(); } else if ($("lyrTap").classList.contains("on")) { e.preventDefault(); P.tap(); } }); }
 async function bootPro(){ bindPro(); const b = await fdb.get("backing"); if (b && b.bytes) { const r = await setBacking(b.name, b.bytes, false); if (!r.ok) $("bkErr").textContent = r.msg; }
   const g = await fdb.get("guide"); if (g) { if (g.kind === "file") await setGuideFile(g.name, g.bytes); else { gd = { kind: "loop", sr: g.sr, data: g.data }; gdId++; } }

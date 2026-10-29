@@ -391,7 +391,7 @@ async function measureStopSilence(){ const a = new Float32Array(bus.anT.fftSize)
 let rec = null, armNext = false; const recNotes = [];
 const FREE_BARS = 8, FREE_TAKES = 6;
 async function startRec(){ await ensureCtx(); if (!mic && !midiInPort && !state.recordKeys) { setStatus("Turn the mic on or pick a MIDI input first (or tick ‘Record on-screen keys too’)."); return false; }
-  if (!lic.valid && takes.length >= FREE_TAKES && midiTakes().length >= FREE_TAKES) { setStatus(`The free version keeps ${FREE_TAKES} takes per lane. Delete one or unlock TakeKit.`); return false; }
+  if (gated() && takes.length >= FREE_TAKES && midiTakes().length >= FREE_TAKES) { setStatus(`The free version keeps ${FREE_TAKES} takes per lane. Delete one or unlock TakeKit.`); return false; }
   const wasPlaying = !!play; capChunks.length = 0; recNotes.length = 0;
   if (wasPlaying && state.loop) rec = { passes: [], made: 0 }; else { cue = null; armNext = true; if (!start()) { armNext = false; return false; } }
   if (mic) mic.node.port.postMessage({ rec: true });
@@ -400,11 +400,11 @@ function latencyS(){ return (ctx ? (ctx.outputLatency || ctx.baseLatency || 0) :
 function recTick(){ while (rec && rec.passes.length) { const p = rec.passes[0], ld = (p.b1 - p.b0) * 4 * 60 / p.bpm; if (ctx.currentTime > p.t0 + ld + latencyS() + 0.06) finishPass(rec.passes.shift()); else break; } }
 function finishPass(p){ const ld = (p.b1 - p.b0) * 4 * 60 / p.bpm, off = p.b0 * 4 * 60 / p.bpm, made = []; let num = 0; const passNo = () => num || (num = state.nextTake++);
   if (p.bpm !== state.bpm || p.bars !== state.bars) { setStatus("Tempo or length changed during the pass, so it wasn't kept as a take."); return; }
-  if (!lic.valid && takes.length >= FREE_TAKES && midiTakes().length >= FREE_TAKES) { setStatus(`Free version: ${FREE_TAKES} takes per lane reached. Unlock for unlimited takes.`); return; }
-  if (mic && (lic.valid || takes.length < FREE_TAKES)) { const part = sliceCapture(p.t0, ld), data = new Float32Array(Math.round(p.bars * 4 * 60 / p.bpm * ctx.sampleRate)), o0 = Math.round(off * ctx.sampleRate); data.set(part.subarray(0, Math.max(0, data.length - o0)), o0); let pk = 0; for (let i = 0; i < data.length; i++) pk = Math.max(pk, Math.abs(data[i]));
+  if (gated() && takes.length >= FREE_TAKES && midiTakes().length >= FREE_TAKES) { setStatus(`Free version: ${FREE_TAKES} takes per lane reached. Unlock for unlimited takes.`); return; }
+  if (mic && (!gated() || takes.length < FREE_TAKES)) { const part = sliceCapture(p.t0, ld), data = new Float32Array(Math.round(p.bars * 4 * 60 / p.bpm * ctx.sampleRate)), o0 = Math.round(off * ctx.sampleRate); data.set(part.subarray(0, Math.max(0, data.length - o0)), o0); let pk = 0; for (let i = 0; i < data.length; i++) pk = Math.max(pk, Math.abs(data[i]));
     if (pk > 0.003) { const t = { id: "v" + Date.now().toString(36) + state.nextTake, name: "Take " + passNo(), lane: "voice", sr: ctx.sampleRate, data, bpm: p.bpm, bars: p.bars, region: [p.b0, p.b1], created: Date.now() }; t.an = analyzeAudio(t); takes.push(t); idb.put(t); made.push(t.name); } }
   const sd = 60 / p.bpm / 4, ns = recNotes.filter(n => n.on >= p.t0 - 0.03 && n.on < p.t0 + ld - 0.03).map(n => ({ n: n.note, v: Math.round(n.vel * 1000) / 1000, s: Math.max(0, Math.round((n.on - p.t0) / sd * 1000) / 1000) + p.b0 * STEPS, d: Math.max(0.25, Math.round((Math.min(n.off != null ? n.off : p.t0 + ld, p.t0 + ld) - n.on) / sd * 1000) / 1000) }));
-  if (ns.length && (lic.valid || midiTakes().length < FREE_TAKES)) { const t = { id: "m" + Date.now().toString(36) + state.nextTake, name: "MIDI " + passNo(), lane: "midi", notes: ns, bars: p.bars }; state.midiTakes.push(t); made.push(t.name); }
+  if (ns.length && (!gated() || midiTakes().length < FREE_TAKES)) { const t = { id: "m" + Date.now().toString(36) + state.nextTake, name: "MIDI " + passNo(), lane: "midi", notes: ns, bars: p.bars }; state.midiTakes.push(t); made.push(t.name); }
   const keep = p.t0 + ld - 1; for (let i = capChunks.length - 1; i >= 0; i--) if ((capChunks[i].f + capChunks[i].d.length) / ctx.sampleRate < keep + latencyS()) capChunks.splice(i, 1);
   save(); if (rec) rec.made += made.length; paintTakes(); setStatus(made.length ? `Kept ${made.join(" + ")}. Keep going: the next pass is the next take.` : "That pass was silent, so no take was kept."); }
 function endRec(discard){ if (!rec) return; const p = rec.passes.length; rec = null; if (mic) mic.node.port.postMessage({ rec: false }); paintTransport(); if (p && discard) setStatus("Stopped. The unfinished pass was dropped; full passes are kept as takes."); }
@@ -446,7 +446,7 @@ async function importFiles(files){ await ensureCtx(); let made = 0; const L = Ma
   for (const f of files) { let b; try { b = await ctx.decodeAudioData(await f.arrayBuffer()); } catch (e) { setStatus(`Couldn't read ${f.name} (${e.name}).`); continue; }
     const m = new Float32Array(b.length); for (let c = 0; c < b.numberOfChannels; c++) { const d = b.getChannelData(c); for (let i = 0; i < b.length; i++) m[i] += d[i] / b.numberOfChannels; }
     const passes = Math.max(1, Math.round(m.length / L));
-    for (let p = 0; p < passes; p++) { if (!lic.valid && takes.length >= FREE_TAKES) { setStatus(`The free version keeps ${FREE_TAKES} takes. Unlock to import more.`); break; }
+    for (let p = 0; p < passes; p++) { if (gated() && takes.length >= FREE_TAKES) { setStatus(`The free version keeps ${FREE_TAKES} takes. Unlock to import more.`); break; }
       const data = new Float32Array(L); data.set(m.subarray(p * L, Math.min(m.length, (p + 1) * L)));
       const t = { id: "v" + Date.now().toString(36) + state.nextTake, name: (passes > 1 ? f.name.replace(/\.[^.]+$/, "").slice(0, 18) + " p" + (p + 1) : f.name.replace(/\.[^.]+$/, "").slice(0, 22)), lane: "voice", sr: ctx.sampleRate, data, bpm: state.bpm, bars: state.bars, created: Date.now() };
       state.nextTake++; t.an = analyzeAudio(t); takes.push(t); idb.put(t); made++; } }
@@ -455,68 +455,113 @@ async function importFiles(files){ await ensureCtx(); let made = 0; const L = Ma
 // ---------- export: OfflineAudioContext, 48 kHz, exact bar length, downbeat at sample 0, tail folded, peak -1 dBFS ----------
 // Exports are always the comp (B) unless a raw take is asked for; what you are auditioning never changes the file.
 function exportEvents(){ return (state.src === "backing" ? [] : bandEvents(state)).concat(midiCompEvents("comp")).map(e => Object.assign({ abs: e.s }, e)); }
-async function renderMix(o){ o = o || {}; const sd = stepDur(), N = Math.round(state.bars * 4 * 60 / state.bpm * SR), T = Math.round(TAIL_S * SR), evs = exportEvents();
+// o.range = [firstBar, endBar) renders just those bars (section / bar-range export, no loop fold); long renders run in
+// bar-aligned chunks (each chunk's ring-out is added into the next), so a phone never holds one giant OfflineAudioContext.
+const CHUNK_S = () => window.__tkChunkS || (isIOS() ? 45 : 120), barSmpOf = () => 4 * 60 / state.bpm * SR, smpAt = b => Math.round(b * 4 * 60 / state.bpm * SR);
+async function renderMix(o){ o = o || {}; const sd = stepDur(), r0 = o.range ? o.range[0] : 0, r1 = o.range ? o.range[1] : state.bars, S0 = smpAt(r0), N = smpAt(r1) - S0, T = Math.round(TAIL_S * SR), evs = exportEvents();
   const only = o.only || CHAIRS.map(c => c.id).concat(["voice"], window.__pro && window.__pro.bkInMix() ? ["backing"] : []);
-  const need = instsOf(evs.filter(e => only.includes(e.ch))); if (!(await ensureInstruments(need))) throw new Error("Missing instruments: " + missingLabels(filesFor(need.concat(["kit"]))).join(", "));
-  const oc = new OfflineAudioContext(2, N + T, SR), sum = oc.createGain(); sum.connect(oc.destination); const chairs = {};
-  for (const c of CHAIRS) { const g = oc.createGain(); g.gain.value = state.gains[c.id]; g.connect(sum); chairs[c.id] = g; }
-  const barSmp = 4 * 60 / state.bpm * SR;
-  for (const e of evs) { if (state.mutes[e.ch] || !only.includes(e.ch)) continue; const b = Math.floor(e.abs / STEPS); playEvent(oc, chairs[e.ch], e, (Math.round(b * barSmp) + Math.round((e.abs - b * STEPS) * sd * SR)) / SR, sd, false); }
-  if (only.includes("voice") && !state.voiceMute && takes.length) { const v = renderVoice(choiceFor("voice", o.listen || "comp"), takes[0].sr), ab = oc.createBuffer(1, v.N, v.sr); ab.copyToChannel(v.data, 0);
-    const s = oc.createBufferSource(), g = oc.createGain(); s.buffer = ab; g.gain.value = state.voiceGain; s.connect(g); g.connect(window.__pro ? await window.__pro.voiceDest(oc, sum, o) : sum); s.start(0); }
-  if (window.__pro) await window.__pro.offlineExtras(oc, sum, only, N);
-  const buf = await oc.startRendering(), ch = [0, 1].map(i => { const src = buf.getChannelData(i), x = src.slice(0, N); for (let j = 0; j < T && j < N; j++) x[j] += src[N + j]; return x; });
+  const need = instsOf(evs.filter(e => only.includes(e.ch))); if (!(await ensureInstruments(need))) throw new Error("Missing instruments: " + missingLabels(filesFor(need.concat(["kit"]))).join(", ") + ". Tap Retry next to the sample list, then export again.");
+  const barSmp = barSmpOf(), cb = Math.max(1, Math.floor(CHUNK_S() * SR / barSmp)), forceChunk = o.chunked === true, nCh = (forceChunk || (r1 - r0) * barSmp > CHUNK_S() * SR) ? Math.ceil((r1 - r0) / cb) : 1;
+  let ch; try { ch = [new Float32Array(N), new Float32Array(N)]; } catch (e) { throw memErr(r1 - r0); }
+  const v = only.includes("voice") && !state.voiceMute && takes.length ? renderVoice(choiceFor("voice", o.listen || "comp"), takes[0].sr) : null, cache = {};
+  let carry = null;
+  for (let k = 0; k < nCh; k++) { const a = nCh === 1 ? r0 : r0 + k * cb, b = nCh === 1 ? r1 : Math.min(r1, a + cb), A = smpAt(a), L = smpAt(b) - A, last = b >= r1;
+    if (o.onProgress) o.onProgress(k / nCh, k + 1, nCh);
+    let buf; try {
+      const oc = new OfflineAudioContext(2, L + T, SR), sum = oc.createGain(); sum.connect(oc.destination); const chairs = {};
+      for (const c of CHAIRS) { const g = oc.createGain(); g.gain.value = state.gains[c.id]; g.connect(sum); chairs[c.id] = g; }
+      for (const e of evs) { if (state.mutes[e.ch] || !only.includes(e.ch)) continue; const bi = Math.floor(e.abs / STEPS); if (bi < a || bi >= b) continue; playEvent(oc, chairs[e.ch], e, (Math.round(bi * barSmp) + Math.round((e.abs - bi * STEPS) * sd * SR) - A) / SR, sd, false); }
+      if (v) { const vs = Math.round(A * v.sr / SR), vl = Math.min(v.N - vs, Math.round(L * v.sr / SR)); if (vl > 0) { const ab = oc.createBuffer(1, vl, v.sr); ab.copyToChannel(v.data.subarray(vs, vs + vl), 0);
+        const s = oc.createBufferSource(), g = oc.createGain(); s.buffer = ab; g.gain.value = state.voiceGain; s.connect(g); g.connect(window.__pro ? await window.__pro.voiceDest(oc, sum, o) : sum); s.start(0); } }
+      if (window.__pro) await window.__pro.offlineExtras(oc, sum, only, L, A / SR, cache, last);
+      buf = await oc.startRendering();
+    } catch (e) { if (nCh === 1 && !forceChunk && (r1 - r0) > 1 && isMemErr(e)) return renderMix(Object.assign({}, o, { chunked: true })); throw isMemErr(e) ? memErr(r1 - r0) : e; }
+    const off = A - S0; for (let c = 0; c < 2; c++) { const src = buf.getChannelData(c), x = ch[c]; x.set(src.subarray(0, L), off);
+      if (carry) for (let j = 0; j < T && off + j < N; j++) x[off + j] += carry[c][j]; }
+    carry = [0, 1].map(c => buf.getChannelData(c).slice(L, L + T)); await new Promise(r => setTimeout(r, 0)); }
+  // full-song exports fold the ring-out into the top (seamless loop, as before); section/range exports keep a hard, exact end
+  if (!o.range && carry) for (let c = 0; c < 2; c++) for (let j = 0; j < T && j < N; j++) ch[c][j] += carry[c][j];
   let pk = 0; for (const x of ch) for (let i = 0; i < N; i++) { const a = Math.abs(x[i]); if (a > pk) pk = a; }
   const target = Math.pow(10, -1.1 / 20), g = o.gain != null ? o.gain : (pk > 0 ? target / pk : 1); if (!o.noNorm) for (const x of ch) for (let i = 0; i < N; i++) x[i] *= g;
-  return { ch, N, gain: g, peak: pk }; }
+  if (o.onProgress) o.onProgress(1, nCh, nCh); return { ch, N, gain: g, peak: pk, chunks: nCh }; }
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isMemErr = e => !!e && (e instanceof RangeError || /memory|allocat|NotSupported|too large|out of/i.test((e.name || "") + " " + (e.message || "")));
+const memErr = bars => new Error(`This device ran out of memory rendering ${bars} bars. Export a section or a shorter bar range (pick it under "What to export"), or close other tabs and try again.`);
 function wav24(ch, N){ const nc = 2, len = N * nc * 3, b = new ArrayBuffer(44 + len), v = new DataView(b); let p = 0;
   const str = s => { for (const c of s) v.setUint8(p++, c.charCodeAt(0)); }, u32 = x => { v.setUint32(p, x, true); p += 4; }, u16 = x => { v.setUint16(p, x, true); p += 2; };
   str("RIFF"); u32(36 + len); str("WAVE"); str("fmt "); u32(16); u16(1); u16(nc); u32(SR); u32(SR * nc * 3); u16(nc * 3); u16(24); str("data"); u32(len);
   for (let i = 0; i < N; i++) for (let c = 0; c < nc; c++) { let x = Math.round(Math.max(-1, Math.min(1, ch[c][i])) * 8388607); if (x < 0) x += 16777216; v.setUint8(p++, x & 255); v.setUint8(p++, (x >> 8) & 255); v.setUint8(p++, (x >> 16) & 255); }
   return new Uint8Array(b); }
 const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "take";
-const fileBase = o => `${APP}-${state.recipe}${o && o.part ? "-" + slug(o.part) : ""}-${state.bpm}bpm-${keyLabel(state)}`;
-function midiFile(){ const PPQ = 480, T = PPQ / 4, total = loopSteps() * T, vlq = n => { const a = [n & 127]; while (n >>= 7) a.unshift((n & 127) | 128); return a; };
+const fileBase = o => `${APP}-${state.recipe}${o && o.part ? "-" + slug(o.part) : ""}-${state.bpm}bpm-${keyLabel(state)}${o && o.range ? `-bars${o.range[0] + 1}-${o.range[1]}` : ""}`;
+function midiFile(o){ o = o || {}; const R0 = o.range ? o.range[0] * STEPS : 0, R1 = o.range ? o.range[1] * STEPS : loopSteps(), PPQ = 480, T = PPQ / 4, total = (R1 - R0) * T, vlq = n => { const a = [n & 127]; while (n >>= 7) a.unshift((n & 127) | 128); return a; };
   const trk = evs => { evs.sort((a, b) => a.t - b.t || a.o - b.o); let last = 0; const d = []; for (const e of evs) { d.push(...vlq(e.t - last), ...e.b); last = e.t; }
     d.push(...vlq(Math.max(0, total - last)), 0xFF, 0x2F, 0); return [0x4D, 0x54, 0x72, 0x6B, (d.length >>> 24) & 255, (d.length >> 16) & 255, (d.length >> 8) & 255, d.length & 255, ...d]; };
   const meta = (type, s) => { const c = [...new TextEncoder().encode(s)]; return [0xFF, type, ...vlq(c.length), ...c]; }, us = Math.round(60000000 / state.bpm);
   const cond = [{ t: 0, o: 0, b: meta(0x03, `${BRAND} ${state.bpm} BPM ${keyLabel(state)}`) }, { t: 0, o: 1, b: [0xFF, 0x51, 3, (us >> 16) & 255, (us >> 8) & 255, us & 255] }, { t: 0, o: 2, b: [0xFF, 0x58, 4, 4, 2, 24, 8] }];
   const c = comps(), N = nSeg(), L = loopSteps() / N;
   for (let k = 0; k < N; k++) { const parts = []; if (takes.length) parts.push("vox " + (c.voice.choice[k] ? takeLabel(c.voice.choice[k]) : "-")); if (midiTakes().length) parts.push("midi " + (c.midi.choice[k] ? takeLabel(c.midi.choice[k]) : "-"));
-    cond.push({ t: Math.round(k * L * T), o: 3, b: meta(0x06, `Seg ${k + 1}: ${chName(chordAt(Math.floor(k * L / STEPS)))}${parts.length ? " | " + parts.join(" | ") : ""}`) }); }
-  for (const r of regions()) cond.push({ t: r.b0 * STEPS * T, o: 4, b: meta(0x06, "Section: " + r.name) });
-  const tracks = [trk(cond)], evs = exportEvents(); if (window.__pro) { const ly = window.__pro.midiLyrics(T, meta); if (ly.length > 1) tracks.push(trk(ly)); }
+    if (k * L < R0 || k * L >= R1) continue; cond.push({ t: Math.round((k * L - R0) * T), o: 3, b: meta(0x06, `Seg ${k + 1}: ${chName(chordAt(Math.floor(k * L / STEPS)))}${parts.length ? " | " + parts.join(" | ") : ""}`) }); }
+  for (const r of regions()) if (r.b0 * STEPS >= R0 && r.b0 * STEPS < R1) cond.push({ t: (r.b0 * STEPS - R0) * T, o: 4, b: meta(0x06, "Section: " + r.name) });
+  const tracks = [trk(cond)], evs = exportEvents().filter(e => e.abs >= R0 && e.abs < R1).map(e => Object.assign({}, e, { abs: e.abs - R0, d: Math.min(e.d, R1 - e.abs) })); if (window.__pro && !o.range) { const ly = window.__pro.midiLyrics(T, meta); if (ly.length > 1) tracks.push(trk(ly)); }
   const noteTrack = (name, ch, list, gm) => { const out = [{ t: 0, o: 0, b: meta(0x03, name) }]; if (gm != null) out.push({ t: 0, o: 1, b: [0xC0 | ch, gm] });
     for (const e of list) { const t0 = Math.round(e.abs * T), t1 = Math.min(total, Math.round((e.abs + e.d) * T)), v = clamp(Math.round(e.v * 127), 1, 127); out.push({ t: t0, o: 3, b: [0x90 | ch, e.n, v] }); out.push({ t: Math.max(t0 + 1, e.i === "kit" ? t0 + T / 2 : t1), o: 2, b: [0x80 | ch, e.n, 0] }); }
     return trk(out); };
   for (const ch of CHAIRS) { if (state.mutes[ch.id]) continue; const list = evs.filter(e => e.ch === ch.id); if (!list.length) continue; tracks.push(noteTrack(ch.name, ch.ch, list, list[0].i === "kit" ? null : INST[list[0].i].gm)); }
-  midiTakes().forEach((t, i) => { tracks.push(noteTrack(takeName(t) + " (raw take)", 4 + (i % 5), t.notes.filter(n => n.s < loopSteps()).map(n => ({ abs: n.s, d: Math.min(n.d, loopSteps() - n.s), n: n.n, v: n.v, i: state.liveInst })), INST[state.liveInst].gm)); });
+  midiTakes().forEach((t, i) => { tracks.push(noteTrack(takeName(t) + " (raw take)", 4 + (i % 5), t.notes.filter(n => n.s >= R0 && n.s < R1).map(n => ({ abs: n.s - R0, d: Math.min(n.d, R1 - n.s), n: n.n, v: n.v, i: state.liveInst })), INST[state.liveInst].gm)); });
   return new Uint8Array([].concat([0x4D, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, tracks.length, PPQ >> 8, PPQ & 255], ...tracks)); }
-async function exportWavBytes(o){ o = o || {}; const r = await renderMix(o); return { bytes: wav24(r.ch, r.N), name: fileBase(o) + ".wav", frames: r.N, gain: r.gain, peak: r.peak }; }
-function exportMidBytes(){ return { bytes: midiFile(), name: fileBase() + ".mid" }; }
+async function exportWavBytes(o){ o = o || {}; const r = await renderMix(o); let bytes; try { bytes = wav24(r.ch, r.N); } catch (e) { throw isMemErr(e) ? memErr((o.range ? o.range[1] - o.range[0] : state.bars)) : e; } return { bytes, name: fileBase(o) + ".wav", frames: r.N, gain: r.gain, peak: r.peak, chunks: r.chunks }; }
+function exportMidBytes(o){ o = o || {}; return { bytes: midiFile(o), name: fileBase(o) + ".mid" }; }
 function crc32(b){ let c, crc = -1; for (let i = 0; i < b.length; i++) { c = (crc ^ b[i]) & 255; for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xEDB88320 : c >>> 1; crc = (crc >>> 8) ^ c; } return (crc ^ -1) >>> 0; }
-function zipStore(fl){ const parts = [], cen = []; let off = 0; const enc = new TextEncoder(); const le = (n, w) => { const a = []; for (let i = 0; i < w; i++) a.push((n >>> (8 * i)) & 255); return a; };
+function zipStore(fl, asParts){ const parts = [], cen = []; let off = 0; const enc = new TextEncoder(); const le = (n, w) => { const a = []; for (let i = 0; i < w; i++) a.push((n >>> (8 * i)) & 255); return a; };
   for (const f of fl) { const nm = enc.encode(f.name), c = crc32(f.bytes), sz = f.bytes.length;
     const h = new Uint8Array([0x50, 0x4B, 3, 4, 20, 0, 0, 0, 0, 0, 0, 0, 0x21, 0, ...le(c, 4), ...le(sz, 4), ...le(sz, 4), ...le(nm.length, 2), 0, 0, ...nm]);
     parts.push(h, f.bytes); cen.push(new Uint8Array([0x50, 0x4B, 1, 2, 20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0x21, 0, ...le(c, 4), ...le(sz, 4), ...le(sz, 4), ...le(nm.length, 2), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ...le(off, 4), ...nm])); off += h.length + sz; }
   const cl = cen.reduce((a, x) => a + x.length, 0), end = new Uint8Array([0x50, 0x4B, 5, 6, 0, 0, 0, 0, ...le(fl.length, 2), ...le(fl.length, 2), ...le(cl, 4), ...le(off, 4), 0, 0]);
-  const out = new Uint8Array(off + cl + end.length); let p = 0; for (const x of [...parts, ...cen, end]) { out.set(x, p); p += x.length; } return out; }
+  const all = [...parts, ...cen, end]; if (asParts) return all; const out = new Uint8Array(off + cl + end.length); let p = 0; for (const x of all) { out.set(x, p); p += x.length; } return out; }
 // stems: full mix, MIDI, every band chair, the comp vocal and every raw take; same exact length and one shared gain, so they line up and sum in any DAW
-async function exportStemsBytes(){ const full = await exportWavBytes(), fl = [{ name: full.name, bytes: full.bytes }, exportMidBytes()], evs = exportEvents();
-  for (const c of CHAIRS) { if (state.mutes[c.id] || !evs.some(e => e.ch === c.id)) continue; const w = await exportWavBytes({ only: [c.id], part: c.id, gain: full.gain }); fl.push({ name: w.name, bytes: w.bytes }); }
-  if (window.__pro && window.__pro.isBk()) { const w = await exportWavBytes({ only: ["backing"], part: "backing", gain: full.gain }); fl.push({ name: w.name, bytes: w.bytes }); }
-  if (takes.length && !state.voiceMute) { const w = await exportWavBytes({ only: ["voice"], part: "vocal-comp-chain", gain: full.gain, dry: false }); fl.push({ name: w.name, bytes: w.bytes });
-    const wd = await exportWavBytes({ only: ["voice"], part: "vocal-comp-dry", gain: full.gain, dry: true }); fl.push({ name: wd.name, bytes: wd.bytes });
-    for (const t of takes.filter(compatible)) { const w2 = await exportWavBytes({ only: ["voice"], part: "raw-" + takeName(t), gain: full.gain, listen: t.id, dry: true }); fl.push({ name: w2.name, bytes: w2.bytes }); } }
-  if (window.__pro && window.__pro.guideStem()) { const w = await exportWavBytes({ only: ["guide"], part: "guide", gain: full.gain }); fl.push({ name: w.name, bytes: w.bytes }); }
-  return { zip: zipStore(fl), name: fileBase() + "-stems.zip", files: fl }; }
-function download(bytes, name, type){ const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([bytes], { type })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+async function exportStemsBytes(o){ o = o || {}; const R = o.range ? { range: o.range } : {}, jobs = [], evs = exportEvents(), fl = [];
+  jobs.push(["mix", {}]); for (const c of CHAIRS) if (!state.mutes[c.id] && evs.some(e => e.ch === c.id)) jobs.push([c.name, { only: [c.id], part: c.id }]);
+  if (window.__pro && window.__pro.isBk()) jobs.push(["backing", { only: ["backing"], part: "backing" }]);
+  if (takes.length && !state.voiceMute) { jobs.push(["vocal comp (chain)", { only: ["voice"], part: "vocal-comp-chain", dry: false }], ["vocal comp (dry)", { only: ["voice"], part: "vocal-comp-dry", dry: true }]);
+    for (const t of takes.filter(compatible)) jobs.push(["raw " + takeName(t), { only: ["voice"], part: "raw-" + takeName(t), listen: t.id, dry: true }]); }
+  if (window.__pro && window.__pro.guideStem()) jobs.push(["guide", { only: ["guide"], part: "guide" }]);
+  let gain = null;
+  for (let i = 0; i < jobs.length; i++) { const [lab, jo] = jobs[i]; if (o.onProgress) o.onProgress(i / jobs.length, `stem ${i + 1}/${jobs.length}: ${lab}`);
+    const w = await exportWavBytes(Object.assign({}, jo, R, gain != null ? { gain } : {})); if (gain == null) { gain = w.gain; fl.push({ name: w.name, bytes: w.bytes }); fl.push(exportMidBytes(R)); } else fl.push({ name: w.name, bytes: w.bytes }); }
+  const name = fileBase(R) + "-stems.zip"; if (o.blob) { const parts = zipStore(fl, true); return { blob: new Blob(parts, { type: "application/zip" }), name, files: fl.map(f => ({ name: f.name, size: f.bytes.length })) }; }
+  return { zip: zipStore(fl), name, files: fl }; }
+// Save a file. iPhone/iPad: the share sheet (Save to Files, AirDrop, Voice Memos…) via navigator.share({files}); elsewhere a
+// blob link with a[download]; last resort opens the file in a new tab. A tap-to-save button stays up as a backup, because iOS
+// drops the "user gesture" during a long render and may refuse the share sheet until you tap again.
+let lastSave = null;
+async function saveFile(data, name, type, auto){ const blob = data instanceof Blob ? data : new Blob([data], { type }); let file = null;
+  try { file = new File([blob], name, { type }); } catch (e) {}
+  if (lastSave && lastSave.url) URL.revokeObjectURL(lastSave.url); lastSave = { blob, file, name, type, url: URL.createObjectURL(blob) }; paintSave();
+  if (auto === false) return "ready";
+  return trySave(); }
+async function trySave(){ const f = lastSave; if (!f) return "none"; const mb = (f.blob.size / 1048576).toFixed(1) + " MB";
+  if (isIOS() && f.file && navigator.canShare && navigator.share) { let ok = false; try { ok = navigator.canShare({ files: [f.file] }); } catch (e) {}
+    if (ok) { try { await navigator.share({ files: [f.file], title: f.name }); expMsg(`Shared ${f.name} (${mb}). In the share sheet pick "Save to Files" to keep it.`, "ok"); return "shared"; }
+      catch (e) { if (e.name === "AbortError") { expMsg(`Share cancelled. ${f.name} is ready: tap "Save ${f.name}" below to try again.`, "warn"); return "cancelled"; }
+        if (e.name !== "NotAllowedError") expMsg(`Share sheet failed (${e.name}: ${e.message}). Use the "Save" link below instead.`, "bad"); else expMsg(`${f.name} is ready (${mb}). Tap "Save ${f.name}" below to open the share sheet.`, "warn"); return "needs-tap"; } } }
+  try { if ("download" in HTMLAnchorElement.prototype) { const a = document.createElement("a"); a.href = f.url; a.download = f.name; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove(); return "downloaded"; } } catch (e) {}
+  const w = window.open(f.url, "_blank"); if (!w) { expMsg(`Your browser blocked the download. Tap "Save ${f.name}" below.`, "warn"); return "blocked"; } return "opened"; }
+function download(bytes, name, type){ return saveFile(bytes, name, type); }
+function paintSave(){ const el = document.getElementById("saveRow"); if (!el) return; const f = lastSave; el.hidden = !f; if (!f) return;
+  el.innerHTML = `<button id="saveBtn" class="mini">Save ${esc(f.name)}</button> <a id="saveLink" href="${f.url}" download="${esc(f.name)}" target="_blank" rel="noopener">or open it</a> <span class="hint">${(f.blob.size / 1048576).toFixed(1)} MB</span>`;
+  document.getElementById("saveBtn").onclick = () => trySave(); }
+function expMsg(m, cls){ setStatus(m); const el = document.getElementById("expMsg"); if (el) { el.textContent = m; el.className = "expmsg " + (cls || ""); } }
+function expProgress(p){ const el = document.getElementById("expProg"); if (!el) return; el.hidden = p == null; if (p != null) el.value = p; }
 
 // ---------- Lemon Squeezy license gate (restricted to our store + product; empty config = checkout not live yet) ----------
 const LEMON = { checkoutUrl: "", storeId: null, productId: null, price: "$24 once" };
 const LS_API = "https://api.lemonsqueezy.com/v1/licenses/";
 const lic = loadJSON(APP + "-license") || { valid: false };
 const configured = () => !!(LEMON.storeId && LEMON.productId);
+// No Lemon Squeezy product configured = nobody can buy, so nothing is gated. Gating resumes on its own once a product is set.
+const gated = () => configured() && !lic.valid;
+const LAUNCH_NOTE = "Launch: full exports free until checkout opens.";
 if (!configured()) lic.valid = false;
 async function lsCall(action, params){ const r = await fetch(LS_API + action, { method: "POST", headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params).toString() }); return r.json(); }
 const ours = j => !!j && j.meta && +j.meta.store_id === +LEMON.storeId && +j.meta.product_id === +LEMON.productId;
@@ -649,9 +694,18 @@ function paintSections(){ const el = $("secList"); if (!el) return; const band =
   el.querySelectorAll("[data-dup]").forEach(b => b.onclick = () => upd(+b.closest(".sec").dataset.i, (a, i) => { a.splice(i + 1, 0, Object.assign({}, a[i], { lock: false })); }));
   el.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => upd(+b.closest(".sec").dataset.i, (a, i) => { a.splice(i, 1); }));
   $("secBox").classList.toggle("dim", !band); }
-function paintExportBtns(){ if (!ui.wav) return; const free = !lic.valid && state.bars > FREE_BARS, lab = free ? ` 🔒 full ${state.bars}-bar song needs unlock` : ` · ${state.bars} bars`;
+// What to export: the whole song, one section, or a bar range. Sections and ranges up to FREE_BARS are always free.
+function expScope(){ const sel = $("expScope"), v = sel ? sel.value : "song", R = regions();
+  if (v && v.startsWith("sec:")) { const r = R[+v.slice(4)] || R[0]; return { range: [r.b0, r.b1], label: `${r.name} (bars ${r.b0 + 1}–${r.b1})`, bars: r.b1 - r.b0, section: true }; }
+  if (v === "range") { const a = clamp(Math.round(+$("expFrom").value || 1), 1, state.bars), b = clamp(Math.round(+$("expTo").value || a), a, state.bars); return { range: [a - 1, b], label: `bars ${a}–${b}`, bars: b - a + 1, section: false }; }
+  return { range: null, label: `the whole ${state.bars}-bar song`, bars: state.bars, section: false }; }
+const scopeFree = sc => !gated() || sc.section || sc.bars <= FREE_BARS;
+function paintExportBtns(){ if (!ui.wav) return; const sel = $("expScope"); if (sel) { const cur = sel.value || "song", R = regions();
+    sel.innerHTML = `<option value="song">Whole song · ${state.bars} bars</option>` + R.map((r, i) => `<option value="sec:${i}">Section: ${esc(r.name)} · bars ${r.b0 + 1}–${r.b1}</option>`).join("") + `<option value="range">Bar range…</option>`;
+    sel.value = [...sel.options].some(o => o.value === cur) ? cur : "song"; $("expRange").hidden = sel.value !== "range"; $("expFrom").max = $("expTo").max = state.bars; }
+  const sc = expScope(), lock = !scopeFree(sc), lab = lock ? ` 🔒 ${sc.bars} bars needs unlock` : ` · ${sc.range ? sc.label : sc.bars + " bars"}`;
   ui.wav.textContent = "Export WAV" + lab; ui.mid.textContent = "Export MIDI" + lab;
-  $("expNote").textContent = free ? `Playing, recording, scoring and comping the whole song are free. Exports of up to ${FREE_BARS} bars are free; the full ${state.bars}-bar song exports after the unlock (or set the length to 8 bars for a free 8-bar export).` : `Exports are the whole ${state.bars}-bar song, exact length, downbeat at sample 0.`; }
+  $("expNote").textContent = !configured() ? `${LAUNCH_NOTE} Exports are exact length with the downbeat at sample 0.` : lock ? `Exports of a section or up to ${FREE_BARS} bars are free; ${sc.label} exports after the unlock.` : `Exporting ${sc.label}: exact length, downbeat at sample 0.`; }
 function paintMix(){ ui.mix.innerHTML = CHAIRS.map(c => `<div class="ch"><label>${esc(c.name)}</label><input type="range" min="0" max="1.2" step="0.01" value="${state.gains[c.id]}" data-g="${c.id}"><button class="mini ${state.mutes[c.id] ? "on" : ""}" data-m="${c.id}">${state.mutes[c.id] ? "muted" : "mute"}</button></div>`).join("")
     + `<div class="ch"><label>Vocal comp</label><input type="range" min="0" max="1.5" step="0.01" value="${state.voiceGain}" id="vg"><button class="mini ${state.voiceMute ? "on" : ""}" id="vm">${state.voiceMute ? "muted" : "mute"}</button></div>`
     + `<div class="ch"><label>Live keyboard</label><input type="range" min="0" max="1.2" step="0.01" value="${state.liveGain}" id="lg"></div><div class="ch"><label>Master</label><input type="range" min="0" max="1.2" step="0.01" value="${state.master}" id="mg"></div>`;
@@ -669,8 +723,8 @@ function paintInput(){ const g = state.gate; ui.gateOn.checked = g.on; ui.monito
   ui.hearComp.checked = state.hearCompWhileRec; ui.recKeys.checked = state.recordKeys; }
 function paintLicense(){ const b = ui.buy; if (configured() && LEMON.checkoutUrl) { b.textContent = "Unlock TakeKit · " + LEMON.price; b.disabled = false; b.onclick = () => window.open(LEMON.checkoutUrl, "_blank", "noopener"); }
   else { b.textContent = "Checkout opening soon · " + LEMON.price; b.disabled = true; }
-  ui.licState.textContent = lic.valid ? "Unlocked: full-song exports, stems ZIP with every raw take, unlimited takes." : `Free: play, record, score and comp the whole song; WAV + MIDI exports up to ${FREE_BARS} bars; ${FREE_TAKES} takes per lane. Unlock adds full-song exports, stems (every raw take + the comp) and unlimited takes.`;
-  ui.stems.textContent = lic.valid ? "Export stems ZIP" : "Export stems ZIP 🔒"; paintExportBtns(); }
+  ui.licState.textContent = !configured() ? `${LAUNCH_NOTE} WAV, MIDI, stems ZIP and LRC of the whole song, unlimited takes. (${LEMON.price} once when checkout opens.)` : lic.valid ? "Unlocked: full-song exports, stems ZIP with every raw take, unlimited takes." : `Free: play, record, score and comp the whole song; WAV + MIDI exports up to ${FREE_BARS} bars; ${FREE_TAKES} takes per lane. Unlock adds full-song exports, stems (every raw take + the comp) and unlimited takes.`;
+  ui.stems.textContent = gated() ? "Export stems ZIP 🔒" : "Export stems ZIP"; paintExportBtns(); }
 function paintKeys(){ const lo = state.kbdOct * 12 + 12, wk = [], bk = []; let wi = 0;
   for (let n = lo; n < lo + 25; n++) { const blk = [1, 3, 6, 8, 10].includes(pc(n)), lab = KEYMAP[n - lo] || ""; if (blk) bk.push(`<div class="bk" data-n="${n}" style="left:${wi * 34 - 11}px">${lab}</div>`); else { wk.push(`<div class="wk" data-n="${n}">${lab}<small>${pc(n) === 0 ? noteName(n) : ""}</small></div>`); wi++; } }
   ui.kbd.innerHTML = wk.join("") + bk.join(""); ui.kbd.querySelectorAll("[data-n]").forEach(k => { const n = +k.dataset.n;
@@ -701,7 +755,7 @@ function setSetting(k, v){
   save(); if (["recipe", "liveInst", "bpm", "chords"].includes(k)) ensureInstruments(neededInsts()); paintSong(); paintTakes(); if (k === "liveInst" || k === "mutes") { paintMix(); refreshMidi(); } if (window.__pro) window.__pro.onSetting(k); return true; }
 
 function cantPlay(){ setStatus("Can't play yet: " + missingLabels(filesFor(neededInsts())).join(", ") + " didn't load. Press Retry in the samples line."); }
-async function tapStart(){ await ensureCtx(); ui.tap.classList.add("hide"); const ok = await ensureInstruments(neededInsts()); enableMic(); listDevices(); if (!ok) { cantPlay(); return; } setStatus("Audio on. Press ▶ Play loop to hear your band, then ● Record takes and sing a few passes."); }
+async function tapStart(){ ui.tap.classList.add("hide"); await ensureCtx(); const ok = await ensureInstruments(neededInsts()); enableMic(); listDevices(); if (!ok) { cantPlay(); return; } setStatus("Audio on. Press ▶ Play loop to hear your band, then ● Record takes and sing a few passes."); }
 function bind(){ for (const id of ["status", "load", "play", "rec", "pos", "grid", "why", "listen", "abA", "abB", "match", "bpm", "key", "mode", "chords", "bars", "recipe", "seg", "recipeNote", "chordErr", "barsNote", "mix", "sw", "xf", "seam",
     "gateOn", "monitor", "trim", "lat", "hearComp", "recKeys", "buy", "licState", "licKey", "licBtn", "stems", "wav", "mid", "kbd", "audioIn", "audioOut", "audioOutNote", "midiIn", "midiOut", "midiNote", "liveInst", "micBtn", "micState", "tap", "laneV", "laneM", "imp", "impFile", "clearTakes", "presetBpm", "ios", "tl", "loopOn"]) ui[id] = $(id);
   ui.loopOn.onchange = () => setSetting("loop", ui.loopOn.checked); $("secAdd").onclick = () => setSetting("sections", JSON.parse(JSON.stringify(state.sections)).concat([{ name: "Section " + (state.sections.length + 1), bars: 8, chords: "", rot: 0, energy: 0.8 }]));
@@ -734,12 +788,21 @@ function bind(){ for (const id of ["status", "load", "play", "rec", "pos", "grid
   addEventListener("keyup", e => { const n = kn(e); if (n == null) return; held.delete(n); liveOff(n, "screen"); });
   ui.imp.onclick = () => ui.impFile.click(); ui.impFile.onchange = async () => { if (ui.impFile.files.length) await importFiles([...ui.impFile.files]); ui.impFile.value = ""; };
   ui.clearTakes.onclick = async () => { if (!confirm("Delete every take? This can't be undone.")) return; takes = []; state.midiTakes = []; state.locks = { voice: {}, midi: {} }; state.excluded = {}; state.takeNames = {}; state.listen = "comp"; await idb.clear(); save(); paintTakes(); setStatus("All takes cleared."); };
-  const gateBars = () => { if (state.bars > FREE_BARS && !lic.valid) { setStatus(`Exporting the full ${state.bars}-bar song needs the unlock (exports up to ${FREE_BARS} bars are free; set the length to 8 bars for a free export). Playing and recording the whole song stay free.`); return false; } return true; };
-  ui.wav.onclick = async () => { if (!gateBars()) return; try { setStatus("Rendering WAV…"); const w = await exportWavBytes(); download(w.bytes, w.name, "audio/wav"); setStatus(`Saved ${w.name}: ${w.frames.toLocaleString()} samples at 48 kHz / 24-bit, peak −1 dBFS, exactly ${state.bars} bars.`); } catch (e) { setStatus(String(e.message || e)); } };
-  ui.mid.onclick = () => { if (!gateBars()) return; const m = exportMidBytes(); download(m.bytes, m.name, "audio/midi"); setStatus(`Saved ${m.name}: band, your MIDI comp, every MIDI take as its own track, and a marker on each segment naming the take used.`); };
-  ui.stems.onclick = async () => { if (!lic.valid) { setStatus("Stems (every raw take + the comp + each band part) are part of the unlock."); return; } try { setStatus("Rendering stems…"); const z = await exportStemsBytes(); download(z.zip, z.name, "application/zip"); setStatus(`Saved ${z.name}: ${z.files.length} files.`); } catch (e) { setStatus(String(e.message || e)); } };
+  const lockMsg = sc => `Exporting ${sc.label} needs the unlock. A section, or any range up to ${FREE_BARS} bars, exports free: pick it under "What to export". Playing and recording the whole song stay free.`;
+  let busy = false; const run = async (what, fn) => { if (busy) { expMsg("An export is already running…", "warn"); return; } busy = true; [ui.wav, ui.mid, ui.stems].forEach(b => b.disabled = true); expProgress(0);
+    try { await fn(); } catch (e) { console.error(e); expMsg(`${what} export failed: ${e && e.message ? e.message : e}`, "bad"); } finally { busy = false; [ui.wav, ui.mid, ui.stems].forEach(b => b.disabled = false); expProgress(null); } };
+  const prog = what => (p, k, n) => { expProgress(p); expMsg(`Rendering ${what}… ${Math.round(p * 100)}%${typeof k === "string" ? " · " + k : n > 1 ? ` · chunk ${Math.min(k, n)}/${n}` : ""}`, "busy"); };
+  ["expScope", "expFrom", "expTo"].forEach(id => { const el = $(id); if (el) el.onchange = el.oninput = () => paintExportBtns(); });
+  ui.wav.onclick = () => { const sc = expScope(); if (!scopeFree(sc)) { expMsg(lockMsg(sc), "warn"); return; } return run("WAV", async () => { const t0 = performance.now(); expMsg(`Rendering WAV of ${sc.label}…`, "busy");
+    const w = await exportWavBytes({ range: sc.range, onProgress: prog("WAV") }); const r = await saveFile(w.bytes, w.name, "audio/wav");
+    if (r === "downloaded" || r === "opened") expMsg(`Saved ${w.name}: ${w.frames.toLocaleString()} samples at 48 kHz / 24-bit, peak −1 dBFS, exactly ${sc.bars} bars (${((performance.now() - t0) / 1000).toFixed(1)} s${w.chunks > 1 ? `, ${w.chunks} chunks` : ""}).${configured() ? "" : " " + LAUNCH_NOTE}`, "ok"); }); };
+  ui.mid.onclick = () => { const sc = expScope(); if (!scopeFree(sc)) { expMsg(lockMsg(sc), "warn"); return; } return run("MIDI", async () => { const m = exportMidBytes({ range: sc.range }); const r = await saveFile(m.bytes, m.name, "audio/midi");
+    if (r === "downloaded" || r === "opened") expMsg(`Saved ${m.name} (${sc.label}): band, your MIDI comp, every MIDI take as its own track, and a marker on each segment naming the take used.`, "ok"); }); };
+  ui.stems.onclick = () => { const sc = expScope(); if (gated()) { expMsg("Stems (every raw take + the comp + each band part) are part of the unlock.", "warn"); return; } return run("Stems", async () => { expMsg(`Rendering stems of ${sc.label}…`, "busy");
+    const z = await exportStemsBytes({ range: sc.range, blob: true, onProgress: prog("stems") }); const r = await saveFile(z.blob, z.name, "application/zip");
+    if (r === "downloaded" || r === "opened") expMsg(`Saved ${z.name}: ${z.files.length} files, ${(z.blob.size / 1048576).toFixed(1)} MB.${configured() ? "" : " " + LAUNCH_NOTE}`, "ok"); }); };
   ui.licBtn.onclick = async () => { const key = ui.licKey.value.trim(); if (!key) return; ui.licState.textContent = "Checking…"; try { const r = await activateKey(key); if (r.ok) { Object.assign(lic, { valid: true, key, instance: r.instance }); saveLic(); paintLicense(); paintSong(); } else ui.licState.textContent = r.reason; } catch (e) { ui.licState.textContent = "Couldn't reach Lemon Squeezy. Try again."; } };
-  const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); ui.ios.hidden = !ios; }
+  ui.ios.hidden = !isIOS(); }
 
 async function boot(){ bind(); paintAll();
   const rows = await idb.all(); takes = (rows || []).map(r => Object.assign(r, { lane: "voice" })); for (const t of takes) t.an = analyzeAudio(t); ver++; paintTakes();
@@ -749,7 +812,7 @@ async function boot(){ bind(); paintAll();
   if (lic.valid && lic.key && configured()) validateKey(lic.key, lic.instance).then(ok => { if (!ok) { lic.valid = false; saveLic(); paintLicense(); } }).catch(() => {}); }
 
 // test hook for QA (same code paths as the UI)
-window.__takekit = { state, setSetting, ensureCtx, start, stop, startRec, exportWavBytes, exportMidBytes, exportStemsBytes, importFiles, comps, scoresFor, renderVoice, voiceBuffer, makeupFor,
+window.__takekit = { state, setSetting, ensureCtx, start, stop, startRec, exportWavBytes, exportMidBytes, exportStemsBytes, saveFile, trySave, paintAll, expScope, gated, configured, renderMix, regions, importFiles, comps, scoresFor, renderVoice, voiceBuffer, makeupFor,
   takes: () => takes, midiTakes, ready: () => loading.size === 0 && Object.keys(bufs).length > 0 && missingLabels(filesFor(neededInsts())).length === 0, play: () => play, active: () => active.size, liveVoices: () => liveVoices.size, sustainOn: () => sustain, INST, KIT, SAMPLES, bufs: () => Object.keys(bufs).length, latencyS, segLabel, ctx: () => ctx, measureStopSilence, missingLabels, neededInsts, filesFor, liveOn, liveOff, setSustain, onMidi, lic, LEMON, choiceFor, playing: () => !!play, recording: () => !!rec,
   async importBytes(b64, name){ const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < u.length; i++) u[i] = bin.charCodeAt(i); return importFiles([new File([u], name || "take.wav", { type: "audio/wav" })]); },
   seekBar, regions, playRange, chordAt, energyAt, normSections, defaultSections, barLog: () => window.__barLog, cue: () => cue, lock(l, k, id){ state.locks[l][k] = id; save(); paintTakes(); }, paintTakes, enableMic };

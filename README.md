@@ -43,7 +43,8 @@ Set BPM, key and chords. A real-sample band (piano, finger bass, strings, acoust
 - If a sample host is blocked, the app names the missing instruments and keeps playback and export off.
 
 ## Pricing
-- **Free:** loops up to 8 bars, every feature in the app, WAV + MIDI export, 6 takes per lane.
+- **Launch (no Lemon Squeezy product configured yet):** everything is free, including full-song WAV, MIDI, stems ZIP and LRC exports ("Launch: full exports free until checkout opens"). Gating switches on by itself once `LEMON.storeId` + `LEMON.productId` are set.
+- **Free (once checkout is live):** play, record, score and comp the whole song; export any section, or any bar range up to 8 bars (WAV + MIDI); 6 takes per lane.
 - **TakeKit license: $24 once** (no subscription). Unlocks:
   - 16-bar exports
   - the stems ZIP with every raw take

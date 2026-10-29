@@ -158,13 +158,24 @@ async def main():
     await boot(pg); await pg.evaluate(f"()=>{{ delete {F}.state.locks.voice[2]; }}"); await setv(pg,'chords','Am F C G')
     res['license']={'buy':await pg.text_content('#buy'),'config':await pg.evaluate(f"()=>{F}.LEMON")}
     await pg.fill('#licKey','TEST-KEY'); await pg.click('#licBtn'); await pg.wait_for_timeout(300); res['license']['activate_msg']=await pg.text_content('#licState')
-    await pg.click('#stems'); await pg.wait_for_timeout(200); res['license']['stems_gate']=await pg.text_content('#status')
-    await setv(pg,'bars',16); await pg.click('#wav'); await pg.wait_for_timeout(200); res['license']['16bar_gate']=await pg.text_content('#status'); await setv(pg,'bars',8)
+    # store not configured (launch): nothing is gated; 16-bar WAV and stems ZIP download free with the launch note
+    res['license']['note']=await pg.text_content('#expNote')
+    await setv(pg,'bars',16)
+    async with pg.expect_download() as dl: await pg.click('#wav')
+    d16=await dl.value; fp=OD+'/'+d16.suggested_filename; await d16.save_as(fp); res['license']['free_16bar']={'file':d16.suggested_filename,'frames':load(open(fp,'rb').read())[2],'msg':await pg.text_content('#expMsg')}
+    async with pg.expect_download(timeout=120000) as dl: await pg.click('#stems')
+    dz=await dl.value; await dz.save_as(OD+'/free-'+dz.suggested_filename); res['license']['free_stems']={'file':dz.suggested_filename,'n':len(zipfile.ZipFile(OD+'/free-'+dz.suggested_filename).namelist())}
+    # simulate a configured store in memory only: gating comes back on its own
+    await pg.evaluate(f"()=>{{ {F}.LEMON.storeId=1; {F}.LEMON.productId=1; {F}.paintAll(); }}")
+    await pg.click('#stems'); await pg.wait_for_timeout(200); res['license']['stems_gate']=await pg.text_content('#expMsg')
+    await pg.click('#wav'); await pg.wait_for_timeout(200); res['license']['16bar_gate']=await pg.text_content('#expMsg'); await setv(pg,'bars',8)
     async with pg.expect_download() as dl: await pg.click('#wav')
     d0=await dl.value; fp=OD+'/'+d0.suggested_filename; await d0.save_as(fp); res['license']['free_download']={'file':d0.suggested_filename,'frames':load(open(fp,'rb').read())[2]}
     async with pg.expect_download() as dl: await pg.click('#mid')
     d1=await dl.value; await d1.save_as(OD+'/'+d1.suggested_filename); res['license']['free_midi']=d1.suggested_filename
-    res['license']['pass']='opening soon' in res['license']['buy'].lower() and 'opening soon' in res['license']['activate_msg'].lower() and 'unlock' in res['license']['stems_gate'].lower() and 'unlock' in res['license']['16bar_gate'].lower() and d0.suggested_filename=='takekit-pop-92bpm-Am.wav' and d1.suggested_filename=='takekit-pop-92bpm-Am.mid'
+    await pg.evaluate(f"()=>{{ {F}.LEMON.storeId=null; {F}.LEMON.productId=null; {F}.paintAll(); }}")
+    L=res['license']; exp16=round(16*4*60/92*48000)
+    L['pass']='opening soon' in L['buy'].lower() and 'opening soon' in L['activate_msg'].lower() and 'free until checkout opens' in L['note'].lower() and L['free_16bar']['frames']==exp16 and L['free_stems']['n']>=3 and 'unlock' in L['stems_gate'].lower() and 'unlock' in L['16bar_gate'].lower() and d0.suggested_filename=='takekit-pop-92bpm-Am.wav' and L['free_download']['frames']==1001739 and d1.suggested_filename=='takekit-pop-92bpm-Am.mid'
     await pg.click('#play'); await pg.wait_for_timeout(3000); await pg.screenshot(path=OD+'/shot-desk.png',full_page=True); await pg.screenshot(path=OD+'/shot-top.png'); await pg.click('#play')
     host=URL.split('/')[2]; ext=sorted(set(u.split('/')[2] for u in reqs if host not in u and not u.startswith(('data:','blob:'))))
     res['c5']={'external_hosts':ext,'sample_urls_pinned':all(re.search(r'@[0-9a-f]{40}/|/[0-9a-f]{40}/',u) for u in reqs if 'midi-js-soundfonts' in u),'sample_requests':sum(1 for u in reqs if 'midi-js-soundfonts' in u),'bundled_kit_requests':sum(1 for u in reqs if '/samples/drums/' in u)}

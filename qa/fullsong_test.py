@@ -17,14 +17,14 @@ async def main():
     await pg.goto(URL); await pg.evaluate("()=>{localStorage.clear(); indexedDB.deleteDatabase('takekit')}"); await pg.reload()
     await pg.click('#tapBtn'); await pg.wait_for_function(f"{F}.ready()",timeout=90000); await pg.evaluate(HELP)
     d=await pg.evaluate(f"()=>({{bars:{F}.state.bars,loop:{F}.state.loop,whole:{F}.state.bk.whole,regs:{F}.regions().map(r=>r.name),wav:document.getElementById('wav').textContent,play:document.getElementById('play').textContent}})")
-    ok('defaults',d['bars']>=64 and not d['loop'] and d['whole'] and len(d['regs'])>=6 and 'unlock' in d['wav'] and 'unlock' not in d['play'],**d)
+    ok('defaults',d['bars']>=64 and not d['loop'] and d['whole'] and len(d['regs'])>=6 and 'unlock' not in d['wav'] and 'unlock' not in d['play'],**d)
     # free tier: playing the full song is never gated
     await pg.click('#play'); await pg.wait_for_timeout(800); st=await pg.evaluate(f"()=>({{p:{F}.playing(),s:document.getElementById('status').textContent}})"); await pg.click('#play')
     ok('free_play_full_song',st['p'] and 'unlock' not in st['s'].lower(),**st)
     # exact 8-bar export still 1001739 (free), full-song export gated when locked, exact when unlocked
     await setv(pg,'bars',8); r8=await pg.evaluate(f"async()=>({F}.exportWavBytes()).then(r=>r.frames)")
-    await pg.evaluate(f"()=>{F}.setSetting('sections',{F}.defaultSections())"); await pg.click('#wav'); await pg.wait_for_timeout(400); gate=await pg.evaluate("()=>document.getElementById('status').textContent")
-    ok('export_8bar_92',r8==1001739,frames=r8); ok('export_full_gated_free','unlock' in gate.lower(),msg=gate[:200])
+    await pg.evaluate(f"()=>{F}.setSetting('sections',{F}.defaultSections())"); await pg.evaluate(f"()=>{{{F}.LEMON.storeId=1;{F}.LEMON.productId=1;{F}.paintAll()}}"); await pg.click('#wav'); await pg.wait_for_timeout(400); gate=await pg.evaluate("()=>document.getElementById('expMsg').textContent"); await pg.evaluate(f"()=>{{{F}.LEMON.storeId=null;{F}.LEMON.productId=null;{F}.paintAll()}}")
+    ok('export_8bar_92',r8==1001739,frames=r8); ok('export_full_gated_when_store_configured','unlock' in gate.lower(),msg=gate[:200])
     await pg.evaluate(f"()=>{{{F}.lic.valid=true}}"); await secs(pg,SONG); bars=await pg.evaluate(f"()=>{F}.state.bars")
     truth=[c.split()[i%len(c.split())] for (_,n,c,_) in SONG for i in range(n)]
     r=await pg.evaluate(f"async()=>{{const r=await {F}.exportWavBytes(); window.__fx=r; return {{frames:r.frames,name:r.name}}}}"); exp=round(bars*4*60/92*48000)
