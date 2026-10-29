@@ -67,7 +67,7 @@ Set BPM, key and chords. A real-sample band (piano, finger bass, strings, acoust
 
 ## Tests
 - `python3 qa/s9.py <url> out.json` runs the Playwright acceptance suite (AUDIO-ENGINE-RULES §9 plus product checks).
-- `python3 qa/make_demo_takes.py` regenerates the demo takes: 4 passes of the FluidR3 "Voice Oohs" sample singing a melody, with planted flaws (sharp, flat, late, missing, quiet, clipped).
+- `python3 qa/make_demo_takes.py` regenerates the demo takes: 4 passes of a real human voice: "Female-vibrato-1.wav" by Beetricks (Wikimedia Commons, CC0 1.0, https://commons.wikimedia.org/wiki/File:Female-vibrato-1.wav) singing a melody, with planted flaws (sharp, flat, late, missing, quiet, clipped).
 - Results are in [ACCEPTANCE.md](ACCEPTANCE.md).
 
 © 2026 WorkinWithAI. Code under the MIT license (see LICENSE). Samples under their own licenses.

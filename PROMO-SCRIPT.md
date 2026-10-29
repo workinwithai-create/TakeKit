@@ -12,4 +12,4 @@ File: `demo/takekit-demo-20s.mp4`: 1280×720, 30 fps, H.264 + AAC 48 kHz stereo,
 | 13.4–17.1 | A, then B pressed | A/B: best whole take vs the comp, at matched loudness. |
 | 17.1–20.9 | Export panel, Export WAV | Export 48 kHz/24-bit WAV, MIDI and stems. takekit.vercel.app · $24 once |
 
-A caption stays on screen throughout: "Demo takes: FluidR3 'Voice Oohs' sample (not a human singer). Sound: TakeKit's own WAV export."
+A caption stays on screen throughout: "Demo vocal: real CC0 recording (“Female-vibrato-1”, Beetricks, Wikimedia Commons). Band + mix: TakeKit's own WAV export." (v2, 2026-10-28; v1 used the FluidR3 Voice Oohs sample.)

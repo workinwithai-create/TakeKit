@@ -23,4 +23,4 @@ sfzinstruments/virtuosity_drums @ `9f04cf9a734527edfbb0a4eee1f674e45bbf71bc`. Li
 Drum files are trimmed with a 120 ms fade-out and stored as 48 kHz 16-bit FLAC.
 
 ## The demo video's "takes"
-The promo video feeds TakeKit four passes built from the FluidR3 GM `voice_oohs` sample (a recorded choir "ooh", MIT, same pinned commit), with deliberate flaws added. They are not a human singer. See `qa/make_demo_takes.py`.
+The promo video feeds TakeKit four passes built from a real human voice: "Female-vibrato-1.wav" by Beetricks (Wikimedia Commons, CC0 1.0, https://commons.wikimedia.org/wiki/File:Female-vibrato-1.wav), with deliberate flaws added (pitch offsets by resampling, timing, gain, a dropped bar, a clipped bar). No oscillators or generated noise. See `qa/make_demo_takes.py`.

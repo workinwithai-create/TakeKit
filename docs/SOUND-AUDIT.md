@@ -15,6 +15,6 @@ Result: TakeKit has no synthesized sound sources at all, in the repo or on produ
 | FX | No FX voices exist. Crossfades are gain envelopes on recorded audio | n/a |
 
 The code's two `createBuffer(` calls only hold the rendered comp of the user's recorded takes; neither one generates sound.
-The only generated noise in the repo is in `qa/make_demo_takes.py`: a −66 dBFS "room" floor mixed under the FluidR3 `voice_oohs` test takes, which act as a fake mic for automated QA. It's a test fixture, the app never ships or plays it, and it's quieter than a real room.
+There is no generated noise anywhere in the repo. The QA/promo demo takes (`qa/make_demo_takes.py`) are slices of a real human voice: "Female-vibrato-1.wav" by Beetricks (Wikimedia Commons, CC0 1.0, https://commons.wikimedia.org/wiki/File:Female-vibrato-1.wav), resampled a few semitones per note, with digital silence between notes (the old −66 dBFS noise floor and the FluidR3 `voice_oohs` takes were removed on 2026-10-28).
 
 Proof: run `qa/no_synth.sh https://takekit.vercel.app`. It searches app.js, index.html and the live bundle for createOscillator, OscillatorNode, PeriodicWave, ConstantSource and Math.random.
