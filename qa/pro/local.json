@@ -1,0 +1,284 @@
+{
+ "defaults": {
+  "src": "band",
+  "chain": "Clean Pop",
+  "chainOn": true,
+  "recOnly": true
+ },
+ "bad_file": {
+  "msg": "Couldn't read not-audio.mp3. This browser can't decode that file. Chrome, Edge and Firefox read WAV, MP3, FLAC, M4A/AAC and OGG; AIFF decodes in Safari only, so export AIFF as WAV first.",
+  "loaded": false,
+  "pass": true
+ },
+ "bpm": {
+  "suggestion": "Detected tempo suggestion: 92 BPM use it (your BPM 100 stays until you choose)",
+  "user_bpm_kept": true,
+  "pass": true
+ },
+ "alignment": {
+  "frames": 1001739,
+  "expected": 1001739,
+  "first_transient_ms": 0.021,
+  "band_first_transient_ms": 0.021,
+  "xcorr_lag_samples": 0,
+  "maxdiff_vs_band_export_dBFS": -138.47,
+  "pass": "True"
+ },
+ "whole_track": {
+  "bars": 16,
+  "pass": true
+ },
+ "loop_drift": {
+  "bars_scheduled": 17,
+  "loops": 4.25,
+  "max_drift_samples": 0.0,
+  "file_offsets_per_loop": [
+   [
+    0.3,
+    2.908696,
+    5.517391,
+    8.126087
+   ],
+   [
+    0.3,
+    2.908696,
+    5.517391,
+    8.126087
+   ],
+   [
+    0.3,
+    2.908696,
+    5.517391,
+    8.126087
+   ],
+   [
+    0.3,
+    2.908696,
+    5.517391,
+    8.126087
+   ]
+  ],
+  "loop_starts_equal_take_pass_starts": true,
+  "pass": true,
+  "export_4bar_frames": 500870,
+  "export_4bar_expected": 500870,
+  "tiled_seam_steps": [
+   0.00733,
+   0.00733,
+   0.00733
+  ],
+  "sample_step_p99.9": 0.10273
+ },
+ "include_exclude": {
+  "frames": [
+   1001739,
+   1001739
+  ],
+  "excluded_equals_vocal_only_maxdiff_dBFS": -138.47,
+  "included_minus_excluded_vs_backing_corr": 1.0,
+  "pass": true
+ },
+ "chain": {
+  "default_preset": "Clean Pop",
+  "null_all_stages_bypassed_vs_dry_dBFS": -240.0,
+  "null_chain_off_vs_dry_dBFS": -240.0,
+  "repeat_render_maxdiff_dBFS": -240.0,
+  "chain_vs_dry_rms_diff_dBFS": -18.25,
+  "presets": {
+   "Off": {
+    "state": {
+     "p": "Off",
+     "on": false,
+     "ui": 8
+    },
+    "frames": 1001739,
+    "peak_dBFS": -1.1,
+    "deterministic_dBFS": -240.0
+   },
+   "Clean Pop": {
+    "state": {
+     "p": "Clean Pop",
+     "on": true,
+     "ui": 8
+    },
+    "frames": 1001739,
+    "peak_dBFS": -1.1,
+    "deterministic_dBFS": -138.47
+   },
+   "Warm Ballad": {
+    "state": {
+     "p": "Warm Ballad",
+     "on": true,
+     "ui": 8
+    },
+    "frames": 1001739,
+    "peak_dBFS": -1.1,
+    "deterministic_dBFS": -240.0
+   },
+   "Rap Upfront": {
+    "state": {
+     "p": "Rap Upfront",
+     "on": true,
+     "ui": 8
+    },
+    "frames": 1001739,
+    "peak_dBFS": -1.1,
+    "deterministic_dBFS": -138.47
+   },
+   "Airy R&B": {
+    "state": {
+     "p": "Airy R&B",
+     "on": true,
+     "ui": 8
+    },
+    "frames": 1001739,
+    "peak_dBFS": -1.1,
+    "deterministic_dBFS": -138.47
+   },
+   "Rock Grit": {
+    "state": {
+     "p": "Rock Grit",
+     "on": true,
+     "ui": 8
+    },
+    "frames": 1001739,
+    "peak_dBFS": -1.1,
+    "deterministic_dBFS": -138.47
+   }
+  },
+  "pass": true
+ },
+ "guide": {
+  "score_default_on": true,
+  "rec_only_default": true,
+  "loop_len": 1001739,
+  "loop_rms": 0.1225,
+  "scores_vs_key_take1": [
+   "\u22122\u00a2 flat",
+   "+35\u00a2 sharp",
+   "\u22123\u00a2 flat",
+   "+1\u00a2 sharp",
+   "+17\u00a2 sharp",
+   "\u22120\u00a2 flat",
+   "\u22121\u00a2 flat",
+   "+0\u00a2 sharp"
+  ],
+  "scores_vs_guide_take1": [
+   "100 clean",
+   "99 clean",
+   "99 clean",
+   "100 clean",
+   "100 clean",
+   "100 clean",
+   "99 clean",
+   "100 clean"
+  ],
+  "mix_excludes_guide_maxdiff_dBFS": -138.47,
+  "guide_forced_in_differs_dBFS": -14.95,
+  "pass": "True"
+ },
+ "stems": {
+  "files": [
+   "takekit-pop-92bpm-Am.wav",
+   "takekit-pop-92bpm-Am.mid",
+   "takekit-pop-backing-92bpm-Am.wav",
+   "takekit-pop-vocal-comp-chain-92bpm-Am.wav",
+   "takekit-pop-vocal-comp-dry-92bpm-Am.wav",
+   "takekit-pop-raw-demo-p1-92bpm-Am.wav",
+   "takekit-pop-raw-demo-p2-92bpm-Am.wav",
+   "takekit-pop-raw-demo-p3-92bpm-Am.wav",
+   "takekit-pop-raw-demo-p4-92bpm-Am.wav",
+   "takekit-pop-guide-92bpm-Am.wav"
+  ],
+  "frames": [
+   1001739
+  ],
+  "pass": true
+ },
+ "lyrics": {
+  "text_identical": true,
+  "line_times_s": [
+   0.021,
+   1.957,
+   5.221,
+   7.185,
+   9.797,
+   11.749,
+   14.355,
+   16.956
+  ],
+  "monotonic": true,
+  "words_monotonic": true,
+  "max_dist_to_guide_onset_ms": 0.4,
+  "bar_starts_s": [
+   0.0,
+   2.609,
+   5.217,
+   7.826,
+   10.435,
+   13.043,
+   15.652,
+   18.261
+  ],
+  "pass": true
+ },
+ "lrc": {
+  "lines": 8,
+  "all_tagged_lines_valid": true,
+  "headers_valid": true,
+  "monotonic": true,
+  "text_matches": true,
+  "pass": true,
+  "midi_lyric_events": 39,
+  "midi_line_markers": 8
+ },
+ "persist": {
+  "backing_file_restored": true,
+  "guide_restored": true,
+  "settings_equal": true,
+  "offset_ms": 300,
+  "lyric_edits_equal": true,
+  "textarea_byte_identical": true,
+  "bk_label": "backing-92bpm-Am-pad300.wav \u00b7 42.0 s \u00b7 stored in this browser",
+  "pass": true
+ },
+ "clear": {
+  "src": "band",
+  "isBk": false,
+  "after_reload": false,
+  "pass": true
+ },
+ "errors": [],
+ "mobile": {
+  "iPhone 13": {
+   "scrollW": 390,
+   "innerW": 390,
+   "errors": [],
+   "pass": true
+  },
+  "Pixel 7": {
+   "scrollW": 412,
+   "innerW": 412,
+   "errors": [],
+   "pass": true
+  },
+  "pass": true
+ },
+ "summary": {
+  "bad_file": true,
+  "bpm": true,
+  "alignment": true,
+  "whole_track": true,
+  "loop_drift": true,
+  "include_exclude": true,
+  "chain": true,
+  "guide": true,
+  "stems": true,
+  "lyrics": true,
+  "lrc": true,
+  "persist": true,
+  "clear": true,
+  "mobile": true,
+  "no_page_errors": true
+ }
+}

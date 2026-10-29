@@ -15,9 +15,35 @@
     <label>Key <select id="key"></select> <select id="mode"><option value="minor">minor</option><option value="major">major</option></select></label>
     <label class="grow">Chords (one per bar) <input id="chords" type="text" spellcheck="false" placeholder="Am F C G"></label>
     <label>Bars <select id="bars"><option value="4">4</option><option value="8">8</option><option value="16">16</option></select></label>
+    <label>Backing <select id="src"><option value="band">Band (built-in)</option><option value="backing">Backing track (your file)</option></select></label>
     <label>Band <select id="recipe"></select> <button id="presetBpm" class="mini" title="Use this style's preset tempo">preset tempo</button></label>
   </div>
   <p class="hint"><span id="chordErr"></span> <span id="recipeNote"></span> <span id="barsNote" class="warn"></span></p>
+</section>
+
+<section class="card backing"><h2>1b · Backing track &amp; guide vocal <small>(files stay in this browser)</small></h2>
+  <div class="cols">
+  <div id="bkBox">
+    <h3>Backing track</h3>
+    <div class="row"><button id="bkUp">Upload backing (WAV/MP3/FLAC/M4A/AIFF)…</button><input id="bkFile" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a,.aac,.aif,.aiff,.ogg" hidden><button id="bkClear" class="mini del">Clear backing</button></div>
+    <p id="bkName" class="hint"></p><p id="bkErr" class="hint bad"></p><p id="bkBpm" class="hint"></p>
+    <div class="row"><label>First downbeat <input id="bkOff" type="number" step="0.1" style="width:90px"> ms</label>
+      <button class="mini" data-nudge="-10">−10</button><button class="mini" data-nudge="-1">−1</button><button class="mini" data-nudge="1">+1</button><button class="mini" data-nudge="10">+10</button><button id="bkTap" class="mini">Tap downbeat</button></div>
+    <label class="full">Drag <input id="bkOffR" type="range" min="0" max="30000" step="1"></label>
+    <div class="row"><label>Loop from bar <input id="bkStart" type="number" min="1" step="1"></label><label><input id="bkWhole" type="checkbox"> Play the whole track through</label></div>
+    <div class="row"><label>Volume <input id="bkVol" type="range" min="0" max="1.5" step="0.01"></label><button id="bkMute" class="mini">mute</button></div>
+    <p id="bkGrid" class="hint"></p>
+  </div>
+  <div>
+    <h3>Guide vocal</h3>
+    <div class="row"><button id="gdUp">Upload guide vocal…</button><input id="gdFile" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a,.aif,.aiff" hidden><select id="gdPick"></select><button id="gdClear" class="mini del">Clear guide</button></div>
+    <p id="gdName" class="hint"></p><p id="gdErr" class="hint bad"></p>
+    <div class="row"><label>Volume <input id="gdVol" type="range" min="0" max="1.5" step="0.01"></label><button id="gdMute" class="mini">mute</button><button id="gdSolo" class="mini">solo</button></div>
+    <label><input id="gdRec" type="checkbox"> Guide only while recording (in your headphones)</label>
+    <label><input id="gdScore" type="checkbox"> Score takes against the guide's melody</label>
+    <label><input id="gdFollow" type="checkbox"> Same start as the backing grid</label> <label>own offset <input id="gdOff" type="number" step="1" style="width:80px"> ms</label>
+    <label><input id="gdStem" type="checkbox"> Include guide as a stem (never in the mix)</label>
+  </div></div>
 </section>
 
 <section class="card transport">
@@ -87,14 +113,31 @@
   </div>
 </section>
 
+<section class="card lyrics"><h2>Lyrics <small>(timed to the guide vocal)</small></h2>
+  <div class="cols"><div><textarea id="lyrText" rows="10" spellcheck="false" placeholder="Paste your lyrics. Line breaks and [Section] lines are kept exactly as you type them."></textarea>
+    <div class="row"><button id="lyrAuto">Auto-time to guide</button><button id="lyrTap" class="mini">Tap-to-time</button><button id="lyrTapBtn" class="big" hidden>TAP</button><label><input id="lyrFollow" type="checkbox"> Scroll with playback</label><button id="lyrLrc" class="mini">Export LRC</button></div>
+    <p id="lyrNote" class="hint"></p></div>
+  <div id="lyrList" class="lyrlist"></div></div>
+</section>
+
+<section class="card chain"><h2>Pro vocal chain <small>(comp playback, mic monitor, exports)</small></h2>
+  <div class="row"><label>Preset <select id="chPreset"><option>Off</option><option>Clean Pop</option><option>Warm Ballad</option><option>Rap Upfront</option><option>Airy R&amp;B</option><option>Rock Grit</option></select></label>
+    <label><input id="chOn" type="checkbox"> Chain on</label><label>Output trim <input id="chTrim" type="range" min="-18" max="12" step="0.5"> <b id="chTrim_v"></b></label>
+    <label><input id="chMonFx" type="checkbox"> Reverb/delay in the mic monitor</label></div>
+  <div id="chainUI" class="chainui"></div>
+  <p class="hint">Order: noise gate (input) → high-pass → subtractive EQ → de-esser → fast + levelling compressor → tone EQ → saturation → output trim, with reverb and delay sends. Same graph live and in the offline export, with nothing random in it.</p>
+</section>
+
 <section class="card mixer"><h2>5 · Mix</h2><div id="mix" class="mix"></div><p class="hint">Every chair → master → safety limiter. Exports skip the limiter and are peak-normalised to −1 dBFS.</p></section>
 
 <section class="card export"><h2>6 · Export</h2>
-  <div class="row"><button id="wav">Export WAV</button><button id="mid">Export MIDI</button><button id="stems">Export stems ZIP</button></div>
+  <div class="row"><button id="wav">Export WAV</button><button id="mid">Export MIDI</button><button id="stems">Export stems ZIP</button>
+    <label><input id="bkInc" type="checkbox"> Include backing in the mix</label><label>Vocal <select id="chExport"><option value="chain">with chain</option><option value="dry">dry</option></select></label></div>
   <p class="hint">48 kHz / 24-bit stereo at exactly your bar length with the downbeat on sample 0. It drops onto your DAW grid and loops without clicks. The MIDI has tempo, 4/4, a track per chair, every MIDI take, and markers naming the take used in each segment. Files are named <code>takekit-&lt;band&gt;-&lt;bpm&gt;bpm-&lt;key&gt;</code>.</p>
   <div class="lic"><button id="buy" disabled>Checkout opening soon</button> <input id="licKey" placeholder="License key"> <button id="licBtn" class="mini">Activate</button> <span id="licState" class="hint"></span></div>
 </section>
 </main>
-<footer><p>Real samples only: FluidR3 GM (MIT) pinned to commit <code>044fab8</code> via jsDelivr, plus the Virtuosity Drums kit (CC0), bundled. See <a href="samples/CREDITS.md">credits</a>. Takes stay in this browser (IndexedDB); nothing is uploaded.</p><p>© 2026 WorkinWithAI · TakeKit</p></footer>
+<footer><p>Real samples only: FluidR3 GM (MIT) pinned to commit <code>044fab8</code> via jsDelivr, plus the Virtuosity Drums kit (CC0), bundled. See <a href="samples/CREDITS.md">credits</a>. Reverb IR: "KONSA_HALL_1" by lehtoroni (kajahdus, CC0), bundled. Takes, backing and guide files stay in this browser (IndexedDB); nothing is uploaded.</p><p>© 2026 WorkinWithAI · TakeKit</p></footer>
 <script src="app.js"></script>
+<script src="pro.js"></script>
 </body></html>

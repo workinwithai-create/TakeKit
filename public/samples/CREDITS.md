@@ -24,3 +24,6 @@ Drum files are trimmed with a 120 ms fade-out and stored as 48 kHz 16-bit FLAC.
 
 ## The demo video's "takes"
 The promo video feeds TakeKit four passes built from a real human voice: "Female-vibrato-1.wav" by Beetricks (Wikimedia Commons, CC0 1.0, https://commons.wikimedia.org/wiki/File:Female-vibrato-1.wav), with deliberate flaws added (pitch offsets by resampling, timing, gain, a dropped bar, a clipped bar). No oscillators or generated noise. See `qa/make_demo_takes.py`.
+
+## Reverb impulse response (vocal chain send)
+- `ir/konsa-hall-1.wav`: "KONSA_HALL_1" from the Kajahdus impulse-response collection by lehtoroni, https://github.com/lehtoroni/kajahdus, pinned at commit 9dae39425730eaa8d98bc04af191fbbda0e56d80 (path `konsa/KONSA_HALL_1.wav`). It is a real balloon-pop recording of a hall at the Helsinki Conservatory, 44.1 kHz stereo, licensed CC0 1.0. Used unmodified as the ConvolverNode buffer. TakeKit does not synthesize any IR.

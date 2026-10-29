@@ -128,7 +128,7 @@ const takeName = t => state.takeNames[t.id] || t.name;
 const compatible = t => t.lane === "midi" ? true : (t.bpm === state.bpm && t.bars === state.bars);
 const laneTakes = lane => lane === "voice" ? takes : midiTakes();
 const idb = { db: null,
-  open(){ if (this.db) return Promise.resolve(this.db); return new Promise((res, rej) => { const r = indexedDB.open(APP, 1); r.onupgradeneeded = () => r.result.createObjectStore("takes", { keyPath: "id" }); r.onsuccess = () => res(this.db = r.result); r.onerror = () => rej(r.error); }); },
+  open(){ if (this.db) return Promise.resolve(this.db); return new Promise((res, rej) => { const r = indexedDB.open(APP, 2); r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains("takes")) d.createObjectStore("takes", { keyPath: "id" }); if (!d.objectStoreNames.contains("files")) d.createObjectStore("files", { keyPath: "id" }); }; r.onsuccess = () => res(this.db = r.result); r.onerror = () => rej(r.error); }); },
   async tx(mode, fn){ const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction("takes", mode), s = t.objectStore("takes"), r = fn(s); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); }); },
   put(t){ return this.tx("readwrite", s => s.put({ id: t.id, name: t.name, sr: t.sr, data: t.data, bpm: t.bpm, bars: t.bars, created: t.created })).catch(() => {}); },
   del(id){ return this.tx("readwrite", s => s.delete(id)).catch(() => {}); },
@@ -166,6 +166,7 @@ function segStatsAudio(t, s0, s1){ const fr = t.an, ix = []; for (let i = 0; i <
   for (const i of ix) { pk = Math.max(pk, fr.pk[i]); if (fr.rms[i] > 0.006) { eSum += fr.rms[i] * fr.rms[i]; eN++; }
     if (fr.f0[i] > 0 && fr.rms[i] > 0.006) { voiced++; const m = 69 + 12 * Math.log2(fr.f0[i] / 440); let near = Math.round(m), dn = 99;
       for (let r = Math.floor(m) - 1; r <= Math.ceil(m) + 1; r++) if (allowed.has(pc(r)) && Math.abs(m - r) < dn) { dn = Math.abs(m - r); near = r; } // judge against the nearest note in the key/chord
+      const gm = window.__pro ? window.__pro.guideMidi(fr.t[i]) : null; if (gm != null) { let dd = m - gm; dd -= 12 * Math.round(dd / 12); near = m - dd; } // guide vocal = target melody (any octave)
       const c = (m - near) * 100; if (Math.abs(c) > 70) oof++; else { cAbs += Math.abs(c); cSig += c; } } }
   const g = 60 / state.bpm / 2, ons = fr.on.filter(x => x >= s0 - 0.03 && x < s1 - 0.03), err = ons.map(x => { const k = Math.round(x / g); return (x - k * g) * 1000; });
   return { frames: ix.length, voicedFrac: ix.length ? voiced / ix.length : 0, cents: voiced - oof > 0 ? cAbs / (voiced - oof) : 0, centsSigned: voiced - oof > 0 ? cSig / (voiced - oof) : 0, oof: voiced ? oof / voiced : 0,
@@ -178,7 +179,7 @@ function segStatsMidi(t, s0, s1){ const sd = stepDur(), sc = scalePcs(state), no
 const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : 0; };
 // scores = { segs:[{ empty, cells:{ takeId: { score, parts, reason } } }], takes:[ids] }
 let scoreCache = {};
-function scoresFor(lane){ const key = lane + "|" + ver + "|" + takes.length + "|" + midiTakes().length; if (scoreCache[key]) return scoreCache[key];
+function scoresFor(lane){ const key = lane + "|" + ver + "|" + takes.length + "|" + midiTakes().length + "|" + (window.__pro ? window.__pro.scoreKey() : ""); if (scoreCache[key]) return scoreCache[key];
   const list = laneTakes(lane).filter(compatible), N = nSeg(), segs = [], w = state.weights, wsum = (w.pitch + w.timing + w.level + w.presence) || 1;
   for (let k = 0; k < N; k++) { const cells = {}, stats = {};
     if (lane === "voice") { const L = loopDur() / N, s0 = k * L, s1 = s0 + L; for (const t of list) stats[t.id] = segStatsAudio(t, s0, s1);
@@ -256,7 +257,7 @@ function midiCompEvents(listen){ const ch = choiceFor("midi", listen), N = ch.le
   return out; }
 let songCache = null;
 function song(){ const key = ver + "|" + midiTakes().length; if (songCache && songCache.key === key) return songCache.v;
-  const events = bandEvents(state).concat(midiCompEvents()).map(e => Object.assign({ abs: e.s }, e)); const byStep = new Map();
+  const events = (state.src === "backing" ? [] : bandEvents(state)).concat(midiCompEvents()).map(e => Object.assign({ abs: e.s }, e)); const byStep = new Map();
   for (const e of events) { const k = Math.floor(e.abs); if (!byStep.has(k)) byStep.set(k, []); byStep.get(k).push(e); }
   songCache = { key, v: { events, byStep } }; return songCache.v; }
 const instsOf = evs => [...new Set(evs.filter(e => e.i !== "kit").map(e => e.i))];
@@ -313,12 +314,12 @@ function buildBus(c){ const comp = c.createDynamicsCompressor(); comp.threshold.
   master.gain.value = state.master; live.gain.value = state.liveGain; voice.gain.value = state.voiceMute ? 0 : state.voiceGain;
   for (const ch of CHAIRS) { const g = c.createGain(); g.gain.value = state.mutes[ch.id] ? 0 : state.gains[ch.id]; g.connect(master); g.connect(anT); chairs[ch.id] = g; }
   ab.connect(voice); voice.connect(master); voice.connect(anT); live.connect(master); mon.connect(master); master.connect(comp); comp.connect(c.destination); comp.connect(an);
-  return { comp, master, voice, ab, live, mon, chairs, an, anT }; }
+  const b = { comp, master, voice, ab, live, mon, chairs, an, anT }; if (window.__pro) window.__pro.bus(c, b); return b; }
 async function ensureCtx(){ if (!ctx) { ctx = new (window.AudioContext || window.webkitAudioContext)(); bus = buildBus(ctx); applySink();
     for (const t of takes) if (t.sr !== ctx.sampleRate) { t.data = resample(t.data, t.sr, ctx.sampleRate); t.sr = ctx.sampleRate; t.an = analyzeAudio(t); } }
   if (ctx.state !== "running") await ctx.resume(); }
 function applyMix(){ if (!bus) return; const now = ctx.currentTime; for (const ch of CHAIRS) bus.chairs[ch.id].gain.setTargetAtTime(state.mutes[ch.id] ? 0 : state.gains[ch.id], now, 0.01);
-  bus.master.gain.setTargetAtTime(state.master, now, 0.01); bus.live.gain.setTargetAtTime(state.liveGain, now, 0.01); bus.voice.gain.setTargetAtTime(state.voiceMute ? 0 : state.voiceGain, now, 0.01); }
+  bus.master.gain.setTargetAtTime(state.master, now, 0.01); bus.live.gain.setTargetAtTime(state.liveGain, now, 0.01); bus.voice.gain.setTargetAtTime(state.voiceMute ? 0 : state.voiceGain, now, 0.01); if (window.__pro) window.__pro.apply(); }
 
 // ---------- transport: audio-clock lookahead scheduler; the loop repeats; every pass can be a take ----------
 let play = null, timerId = null; const stepLog = []; window.__schedLog = [];
@@ -342,7 +343,7 @@ function scheduler(){ if (!play) return; const sd = stepDur();
 function scheduleStep(k, time, sd){ const sg = song(), evs = sg.byStep.get(k) || [], heard = [];
   if (k === 0 && rec) rec.passes.push({ t0: time, bpm: state.bpm, bars: state.bars });
   for (const e of evs) { if (state.mutes[e.ch]) continue; const t = time + (e.abs - k) * sd; playEvent(ctx, bus.chairs[e.ch], e, t, sd, true); midiSend(e, t, sd); heard.push(e.ch + ":" + e.n); }
-  if (k % STEPS === 0) { scheduleVoiceBar(k / STEPS, time, play.first); play.first = false; }
+  if (k % STEPS === 0) { if (window.__pro) window.__pro.bar(k / STEPS, time, play.first); scheduleVoiceBar(k / STEPS, time, play.first); play.first = false; }
   stepLog.push({ s: k, time }); if (stepLog.length > 512) stepLog.shift();
   window.__schedLog.push({ step: k, time, ver, bpm: state.bpm, recipe: state.recipe, keyRoot: state.keyRoot, listen: state.listen, notes: heard, voice: k % STEPS === 0 && voiceLive.buf ? voiceLive.key : null }); if (window.__schedLog.length > 4000) window.__schedLog.shift(); }
 function stop(quiet){ clearInterval(timerId); timerId = null; const was = !!play; play = null;
@@ -351,7 +352,7 @@ function stop(quiet){ clearInterval(timerId); timerId = null; const was = !!play
   if (midiOut) for (let c = 0; c < 16; c++) { midiOut.send([0xB0 | c, 123, 0]); midiOut.send([0xB0 | c, 120, 0]); }
   paintTransport(); if (was && !quiet) setStatus("Stopped."); }
 function draw(){ if (!play) return; const now = ctx.currentTime; let cur = null; for (const e of stepLog) { if (e.time <= now) cur = e; else break; }
-  if (cur) paintPlayhead(cur.s); requestAnimationFrame(draw); }
+  if (cur) { paintPlayhead(cur.s); if (window.__pro) window.__pro.draw(cur, now); } requestAnimationFrame(draw); }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { if (play) { stop(true); setStatus("Stopped because the tab was hidden. Any unfinished pass was dropped. Press Play to start again."); } liveAllOff(); } });
 async function measureStopSilence(){ const a = new Float32Array(bus.anT.fftSize), t0 = performance.now(); stop(); for (let i = 0; i < 200; i++) { await new Promise(r => setTimeout(r, 2)); bus.anT.getFloatTimeDomainData(a); let p = 0; for (const x of a) p = Math.max(p, Math.abs(x)); if (p < 0.001) return { ms: performance.now() - t0, peak: p }; } return { ms: null }; }
 
@@ -395,7 +396,7 @@ async function enableMic(){ await ensureCtx(); if (mic) return true;
     const stream = await navigator.mediaDevices.getUserMedia({ audio: c });
     if (!ctx.__tkcap) { await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([CAPTURE_SRC], { type: "application/javascript" }))); ctx.__tkcap = true; }
     const src = ctx.createMediaStreamSource(stream), trim = ctx.createGain(), node = new AudioWorkletNode(ctx, "tkcap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] }), mon = ctx.createGain();
-    trim.gain.value = dbToGain(state.trimDb); mon.gain.value = state.monitor ? 1 : 0; src.connect(trim); trim.connect(node); node.connect(mon); mon.connect(bus.mon);
+    trim.gain.value = dbToGain(state.trimDb); mon.gain.value = state.monitor ? 1 : 0; src.connect(trim); trim.connect(node); node.connect(mon); mon.connect(window.__pro ? window.__pro.monitorDest() : bus.mon); // gate (worklet) first, then the vocal chain
     node.port.onmessage = e => { const m = e.data; if (m.pk !== undefined) { peakHold = Math.max(m.pk, peakHold * 0.85); gateG = m.g; if (m.pk >= 0.98) clipUntil = performance.now() + 1200; paintMeter(); return; } capChunks.push(m); };
     const tr = stream.getAudioTracks()[0], s = tr.getSettings ? tr.getSettings() : {};
     mic = { stream, src, trim, node, mon, inLat: typeof s.latency === "number" ? s.latency : 0.01, label: tr.label }; node.port.postMessage(gateMsg()); if (rec) node.port.postMessage({ rec: true });
@@ -422,16 +423,17 @@ async function importFiles(files){ await ensureCtx(); let made = 0; const L = Ma
 
 // ---------- export: OfflineAudioContext, 48 kHz, exact bar length, downbeat at sample 0, tail folded, peak -1 dBFS ----------
 // Exports are always the comp (B) unless a raw take is asked for; what you are auditioning never changes the file.
-function exportEvents(){ return bandEvents(state).concat(midiCompEvents("comp")).map(e => Object.assign({ abs: e.s }, e)); }
+function exportEvents(){ return (state.src === "backing" ? [] : bandEvents(state)).concat(midiCompEvents("comp")).map(e => Object.assign({ abs: e.s }, e)); }
 async function renderMix(o){ o = o || {}; const sd = stepDur(), N = Math.round(state.bars * 4 * 60 / state.bpm * SR), T = Math.round(TAIL_S * SR), evs = exportEvents();
-  const only = o.only || CHAIRS.map(c => c.id).concat(["voice"]);
+  const only = o.only || CHAIRS.map(c => c.id).concat(["voice"], window.__pro && window.__pro.bkInMix() ? ["backing"] : []);
   const need = instsOf(evs.filter(e => only.includes(e.ch))); if (!(await ensureInstruments(need))) throw new Error("Missing instruments: " + missingLabels(filesFor(need.concat(["kit"]))).join(", "));
   const oc = new OfflineAudioContext(2, N + T, SR), sum = oc.createGain(); sum.connect(oc.destination); const chairs = {};
   for (const c of CHAIRS) { const g = oc.createGain(); g.gain.value = state.gains[c.id]; g.connect(sum); chairs[c.id] = g; }
   const barSmp = 4 * 60 / state.bpm * SR;
   for (const e of evs) { if (state.mutes[e.ch] || !only.includes(e.ch)) continue; const b = Math.floor(e.abs / STEPS); playEvent(oc, chairs[e.ch], e, (Math.round(b * barSmp) + Math.round((e.abs - b * STEPS) * sd * SR)) / SR, sd, false); }
   if (only.includes("voice") && !state.voiceMute && takes.length) { const v = renderVoice(choiceFor("voice", o.listen || "comp"), takes[0].sr), ab = oc.createBuffer(1, v.N, v.sr); ab.copyToChannel(v.data, 0);
-    const s = oc.createBufferSource(), g = oc.createGain(); s.buffer = ab; g.gain.value = state.voiceGain; s.connect(g); g.connect(sum); s.start(0); }
+    const s = oc.createBufferSource(), g = oc.createGain(); s.buffer = ab; g.gain.value = state.voiceGain; s.connect(g); g.connect(window.__pro ? await window.__pro.voiceDest(oc, sum, o) : sum); s.start(0); }
+  if (window.__pro) await window.__pro.offlineExtras(oc, sum, only, N);
   const buf = await oc.startRendering(), ch = [0, 1].map(i => { const src = buf.getChannelData(i), x = src.slice(0, N); for (let j = 0; j < T && j < N; j++) x[j] += src[N + j]; return x; });
   let pk = 0; for (const x of ch) for (let i = 0; i < N; i++) { const a = Math.abs(x[i]); if (a > pk) pk = a; }
   const target = Math.pow(10, -1.1 / 20), g = o.gain != null ? o.gain : (pk > 0 ? target / pk : 1); if (!o.noNorm) for (const x of ch) for (let i = 0; i < N; i++) x[i] *= g;
@@ -451,7 +453,7 @@ function midiFile(){ const PPQ = 480, T = PPQ / 4, total = loopSteps() * T, vlq 
   const c = comps(), N = nSeg(), L = loopSteps() / N;
   for (let k = 0; k < N; k++) { const parts = []; if (takes.length) parts.push("vox " + (c.voice.choice[k] ? takeLabel(c.voice.choice[k]) : "-")); if (midiTakes().length) parts.push("midi " + (c.midi.choice[k] ? takeLabel(c.midi.choice[k]) : "-"));
     cond.push({ t: Math.round(k * L * T), o: 3, b: meta(0x06, `Seg ${k + 1}: ${chName(chordAt(Math.floor(k * L / STEPS)))}${parts.length ? " | " + parts.join(" | ") : ""}`) }); }
-  const tracks = [trk(cond)], evs = exportEvents();
+  const tracks = [trk(cond)], evs = exportEvents(); if (window.__pro) { const ly = window.__pro.midiLyrics(T, meta); if (ly.length > 1) tracks.push(trk(ly)); }
   const noteTrack = (name, ch, list, gm) => { const out = [{ t: 0, o: 0, b: meta(0x03, name) }]; if (gm != null) out.push({ t: 0, o: 1, b: [0xC0 | ch, gm] });
     for (const e of list) { const t0 = Math.round(e.abs * T), t1 = Math.min(total, Math.round((e.abs + e.d) * T)), v = clamp(Math.round(e.v * 127), 1, 127); out.push({ t: t0, o: 3, b: [0x90 | ch, e.n, v] }); out.push({ t: Math.max(t0 + 1, e.i === "kit" ? t0 + T / 2 : t1), o: 2, b: [0x80 | ch, e.n, 0] }); }
     return trk(out); };
@@ -470,8 +472,11 @@ function zipStore(fl){ const parts = [], cen = []; let off = 0; const enc = new 
 // stems: full mix, MIDI, every band chair, the comp vocal and every raw take; same exact length and one shared gain, so they line up and sum in any DAW
 async function exportStemsBytes(){ const full = await exportWavBytes(), fl = [{ name: full.name, bytes: full.bytes }, exportMidBytes()], evs = exportEvents();
   for (const c of CHAIRS) { if (state.mutes[c.id] || !evs.some(e => e.ch === c.id)) continue; const w = await exportWavBytes({ only: [c.id], part: c.id, gain: full.gain }); fl.push({ name: w.name, bytes: w.bytes }); }
-  if (takes.length && !state.voiceMute) { const w = await exportWavBytes({ only: ["voice"], part: "vocal-comp", gain: full.gain }); fl.push({ name: w.name, bytes: w.bytes });
-    for (const t of takes.filter(compatible)) { const w2 = await exportWavBytes({ only: ["voice"], part: "raw-" + takeName(t), gain: full.gain, listen: t.id }); fl.push({ name: w2.name, bytes: w2.bytes }); } }
+  if (window.__pro && window.__pro.isBk()) { const w = await exportWavBytes({ only: ["backing"], part: "backing", gain: full.gain }); fl.push({ name: w.name, bytes: w.bytes }); }
+  if (takes.length && !state.voiceMute) { const w = await exportWavBytes({ only: ["voice"], part: "vocal-comp-chain", gain: full.gain, dry: false }); fl.push({ name: w.name, bytes: w.bytes });
+    const wd = await exportWavBytes({ only: ["voice"], part: "vocal-comp-dry", gain: full.gain, dry: true }); fl.push({ name: wd.name, bytes: wd.bytes });
+    for (const t of takes.filter(compatible)) { const w2 = await exportWavBytes({ only: ["voice"], part: "raw-" + takeName(t), gain: full.gain, listen: t.id, dry: true }); fl.push({ name: w2.name, bytes: w2.bytes }); } }
+  if (window.__pro && window.__pro.guideStem()) { const w = await exportWavBytes({ only: ["guide"], part: "guide", gain: full.gain }); fl.push({ name: w.name, bytes: w.bytes }); }
   return { zip: zipStore(fl), name: fileBase() + "-stems.zip", files: fl }; }
 function download(bytes, name, type){ const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([bytes], { type })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
 
@@ -586,7 +591,7 @@ function paintListen(){ const opts = [["comp", "B · the comp"], ["best", "A · 
 function setOpts(sel, list, v){ sel.innerHTML = list.map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join(""); sel.value = String(v); }
 function paintSong(){ ui.bpm.value = state.bpm; ui.key.value = state.keyRoot; ui.mode.value = state.mode; ui.chords.value = state.chords; ui.bars.value = state.bars; ui.recipe.value = state.recipe; ui.seg.value = state.seg;
   ui.recipeNote.textContent = RECIPES[state.recipe].note + ` · preset tempo ${RECIPES[state.recipe].bpm} BPM`; ui.chordErr.textContent = parseProg(state.chords) ? `One chord per bar, repeating over ${state.bars} bars.` : "Couldn't read those chords (1–8 chords like Am F C G7 Dm/F). Using Am F C G until fixed.";
-  ui.barsNote.textContent = state.bars > FREE_BARS && !lic.valid ? "16-bar loops play and record free; exporting them needs the unlock." : ""; }
+  ui.barsNote.textContent = state.bars > FREE_BARS && !lic.valid ? `${state.bars}-bar loops play and record free; exporting them needs the unlock (8 bars export free).` : ""; }
 function paintMix(){ ui.mix.innerHTML = CHAIRS.map(c => `<div class="ch"><label>${esc(c.name)}</label><input type="range" min="0" max="1.2" step="0.01" value="${state.gains[c.id]}" data-g="${c.id}"><button class="mini ${state.mutes[c.id] ? "on" : ""}" data-m="${c.id}">${state.mutes[c.id] ? "muted" : "mute"}</button></div>`).join("")
     + `<div class="ch"><label>Vocal comp</label><input type="range" min="0" max="1.5" step="0.01" value="${state.voiceGain}" id="vg"><button class="mini ${state.voiceMute ? "on" : ""}" id="vm">${state.voiceMute ? "muted" : "mute"}</button></div>`
     + `<div class="ch"><label>Live keyboard</label><input type="range" min="0" max="1.2" step="0.01" value="${state.liveGain}" id="lg"></div><div class="ch"><label>Master</label><input type="range" min="0" max="1.2" step="0.01" value="${state.master}" id="mg"></div>`;
@@ -620,14 +625,14 @@ function setSetting(k, v){
     for (const t of state.midiTakes) for (const n of t.notes) n.n = clamp(n.n + d, 0, 127); state.keyRoot = pc(+v); if (takes.length && d) setStatus(`Chords and MIDI takes moved ${d > 0 ? "up" : "down"} ${Math.abs(d)} semitone${Math.abs(d) > 1 ? "s" : ""}. Audio takes are never pitch-shifted, so they now score against the new key.`); }
   else if (k === "mode") state.mode = v === "major" ? "major" : "minor";
   else if (k === "chords") { state.chords = String(v).slice(0, 80); }
-  else if (k === "bars") { const n = +v; if (![4, 8, 16].includes(n)) return false; state.bars = n; state.locks = { voice: {}, midi: {} }; }
+  else if (k === "bars") { const n = +v; if (![4, 8, 16].includes(n) && !(state.src === "backing" && state.bk && state.bk.whole && Number.isInteger(n) && n >= 1 && n <= 256)) return false; state.bars = n; state.locks = { voice: {}, midi: {} }; }
   else if (k === "recipe") { if (!RECIPES[v]) return false; state.recipe = v; }
   else if (k === "seg") { const n = +v; if (![0.5, 1, 2].includes(n)) return false; state.seg = n; state.locks = { voice: {}, midi: {} }; }
   else if (k === "listen") state.listen = v;
   else if (k === "liveInst") { if (!INST[v]) return false; state.liveInst = v; }
   else if (k === "mutes") { Object.assign(state.mutes, v); applyMix(); }
   else state[k] = v;
-  save(); if (["recipe", "liveInst", "bpm", "chords"].includes(k)) ensureInstruments(neededInsts()); paintSong(); paintTakes(); if (k === "liveInst" || k === "mutes") { paintMix(); refreshMidi(); } return true; }
+  save(); if (["recipe", "liveInst", "bpm", "chords"].includes(k)) ensureInstruments(neededInsts()); paintSong(); paintTakes(); if (k === "liveInst" || k === "mutes") { paintMix(); refreshMidi(); } if (window.__pro) window.__pro.onSetting(k); return true; }
 
 function cantPlay(){ setStatus("Can't play yet: " + missingLabels(filesFor(neededInsts())).join(", ") + " didn't load. Press Retry in the samples line."); }
 async function tapStart(){ await ensureCtx(); ui.tap.classList.add("hide"); const ok = await ensureInstruments(neededInsts()); enableMic(); listDevices(); if (!ok) { cantPlay(); return; } setStatus("Audio on. Press ▶ Play loop to hear your band, then ● Record takes and sing a few passes."); }
